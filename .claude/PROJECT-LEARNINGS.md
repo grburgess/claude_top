@@ -59,7 +59,7 @@ docs/research/2026-09-01-claude-top.md; graph node research-plan-claude-top.
   verdict:UNPROVABLE (probe-process lesson; re-running the race is nondeterministic)
   — row kept, marked unverified since 2026-09-01 · status:withheld
 - 2026-09-01 · project CLAUDE.md loop-distill block (go path/proxy + quarantine
-  rule) · verdict:HOLDS-candidates pending human review · status:proposed
+  rule) · verdict:HOLDS-candidates, user-approved 2026-09-01 · status:applied
 
 ## 8 Ideation / candidate next loops
 - minor: reducer counts model:"<synthetic>" lines as turns (7 exist across 525 files; cost impact $0 — unknown-model pricing is zero) — one-line fix candidate for v2.
