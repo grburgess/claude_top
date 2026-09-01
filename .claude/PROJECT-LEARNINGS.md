@@ -16,6 +16,7 @@ docs/research/2026-09-01-claude-top.md; graph node research-plan-claude-top.
 | loop | sessions | criteria | status | last touched | flags |
 |---|---|---|---|---|---|
 | claude-top-build | 2 | 6/6 | complete | 2026-09-01 | — |
+| claude-top-v2 | 0 | 0/5 | running | 2026-09-01 | — |
 
 ## 3 Cross-loop verified facts
 - iTerm2 bridge verbs all work via bare osascript (enumerate/select-by-tty/write
