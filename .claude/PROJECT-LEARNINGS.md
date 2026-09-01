@@ -16,7 +16,7 @@ docs/research/2026-09-01-claude-top.md; graph node research-plan-claude-top.
 | loop | sessions | criteria | status | last touched | flags |
 |---|---|---|---|---|---|
 | claude-top-build | 2 | 6/6 | complete | 2026-09-01 | — |
-| claude-top-v2 | 0 | 0/5 | running | 2026-09-01 | — |
+| claude-top-v2 | 1 | 5/5 | complete | 2026-09-01 | — |
 
 ## 3 Cross-loop verified facts
 - iTerm2 bridge verbs all work via bare osascript (enumerate/select-by-tty/write
@@ -63,6 +63,7 @@ docs/research/2026-09-01-claude-top.md; graph node research-plan-claude-top.
   rule) · verdict:HOLDS-candidates, user-approved 2026-09-01 · status:applied
 
 ## 8 Ideation / candidate next loops
+- cosmetic: tmux-owned sessions render window index as ⌘N (iTerm connotation) — label per backend (e.g. ⊞N or win:N).
 - minor: reducer counts model:"<synthetic>" lines as turns (7 exist across 525 files; cost impact $0 — unknown-model pricing is zero) — one-line fix candidate for v2.
 - claude_top v2: theming/config file; per-session token-burn timeline view; Linux/
   tmux jump backend; sanitized-fixture generator for the Cape open-source release.
@@ -70,6 +71,7 @@ docs/research/2026-09-01-claude-top.md; graph node research-plan-claude-top.
   (Bubble Tea) is duplicated effort — candidate consolidation study.
 
 ## 9 Run log
+- 2026-09-01 · loop-distill lite on claude-top-v2 completion · loops:2 (both complete) · no new promotions (learnings project-scoped, already in loop STATE) · CLAUDE.md block: unchanged, still qualifies · flags:0 new; cosmetic ⌘N/tmux label → §8
 - 2026-09-01 · loops:1 (complete) · flags:1 stale (proposal) · promotions:1 pending
   verify, 2 withheld UNPROVABLE · CLAUDE.md block: proposed (gated, human present) ·
   mechanical fixes:0
