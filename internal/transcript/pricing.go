@@ -35,3 +35,12 @@ func contextLimitFor(model string) int64 {
 	}
 	return 200_000
 }
+
+// promoteLimit returns the next context-window tier; observed context
+// exceeding a tier means the session actually runs the bigger window.
+func promoteLimit(cur int64) int64 {
+	if cur == 200_000 {
+		return 1_000_000
+	}
+	return cur
+}

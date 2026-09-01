@@ -1,17 +1,23 @@
-// claude_top monitors Claude Code sessions. UI to come; for now:
+// claude_top monitors Claude Code sessions.
 //
+//	claude_top                          full-screen TUI list view
 //	claude_top --inspect <session-id>   reduce a transcript, print Stats JSON
-//	claude_top                          count sessions via the registry
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/burgessj/claude_top/internal/bridge"
 	"github.com/burgessj/claude_top/internal/registry"
+	"github.com/burgessj/claude_top/internal/signalfile"
 	"github.com/burgessj/claude_top/internal/transcript"
+	"github.com/burgessj/claude_top/internal/ui"
 )
 
 func main() {
@@ -27,12 +33,23 @@ func main() {
 		}
 		return
 	}
-	reg := registry.New("", "")
-	if err := reg.Refresh(); err != nil {
+	if err := runTUI(); err != nil {
 		fmt.Fprintln(os.Stderr, "claude_top:", err)
 		os.Exit(1)
 	}
-	fmt.Printf("TUI coming: %d sessions found\n", len(reg.List(registry.ModeAll)))
+}
+
+func runTUI() error {
+	reg := registry.New("", "")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	signals, err := signalfile.WatchDir(ctx, reg.SignalDir)
+	if err != nil {
+		signals = nil // no signal dir: tick-only refresh
+	}
+	m := ui.New(reg, bridge.NewOSAITerm(), signals)
+	_, err = tea.NewProgram(m, tea.WithAltScreen()).Run()
+	return err
 }
 
 func inspect(sessionID string) error {

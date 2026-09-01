@@ -221,6 +221,89 @@ func TestOffsetMonotonicNoNewData(t *testing.T) {
 	}
 }
 
+func TestUsageDedupPerMessageID(t *testing.T) {
+	// Claude Code emits one assistant line per content block, each
+	// repeating the same cumulative message.usage. Three lines sharing one
+	// message.id with identical usage must count exactly once.
+	ln := `{"type":"assistant","message":{"id":"msg_01","model":"claude-opus-4","usage":{"input_tokens":100,"output_tokens":200,"cache_creation_input_tokens":1000,"cache_read_input_tokens":5000},"content":[{"type":"text","text":"a"}]},"timestamp":"2026-01-01T10:00:00Z"}` + "\n"
+	st := tailAll(t, ln+ln+ln)
+	if st.Turns != 1 {
+		t.Errorf("Turns = %d, want 1 (one message.id)", st.Turns)
+	}
+	// Measured inflation before the fix: 3x on every counter.
+	if st.TotalIn != 100 || st.TotalOut != 200 {
+		t.Errorf("TotalIn/Out = %d/%d, want 100/200 (was inflated 3x)", st.TotalIn, st.TotalOut)
+	}
+	wantCost := 100*15.0/1e6 + 200*75.0/1e6 + 1000*18.75/1e6 + 5000*1.5/1e6
+	if math.Abs(st.CostUSD-wantCost) > 1e-9 {
+		t.Errorf("CostUSD = %v, want %v (was inflated 3x)", st.CostUSD, wantCost)
+	}
+	if !reflect.DeepEqual(st.TokensPerTurn, []int64{200}) {
+		t.Errorf("TokensPerTurn = %v, want [200]", st.TokensPerTurn)
+	}
+}
+
+func TestUsageNoMessageIDEachLineOwnMessage(t *testing.T) {
+	dup := `{"type":"assistant","message":{"id":"msg_02","model":"claude-haiku-3","usage":{"input_tokens":10,"output_tokens":20}},"timestamp":"2026-01-01T10:00:00Z"}` + "\n"
+	noID := `{"type":"assistant","message":{"model":"claude-haiku-3","usage":{"input_tokens":1,"output_tokens":2}},"timestamp":"2026-01-01T10:01:00Z"}` + "\n"
+	st := tailAll(t, dup+dup+noID+noID)
+	if st.Turns != 3 {
+		t.Errorf("Turns = %d, want 3 (msg_02 once + 2 id-less lines)", st.Turns)
+	}
+	if st.TotalIn != 12 || st.TotalOut != 24 {
+		t.Errorf("TotalIn/Out = %d/%d, want 12/24", st.TotalIn, st.TotalOut)
+	}
+}
+
+func TestContextLimitPromotion1M(t *testing.T) {
+	// Plain "claude-opus-5" gives no 1M hint; observed context past 95% of
+	// 200k must promote the limit to the next tier.
+	jsonl := `{"type":"assistant","message":{"id":"m1","model":"claude-opus-5","usage":{"input_tokens":100,"output_tokens":10,"cache_creation_input_tokens":3626,"cache_read_input_tokens":400000}},"timestamp":"2026-01-01T10:00:00Z"}
+{"type":"assistant","message":{"id":"m2","model":"claude-opus-5","usage":{"input_tokens":1,"output_tokens":1}},"timestamp":"2026-01-01T10:01:00Z"}
+`
+	st := tailAll(t, jsonl)
+	if st.ContextTokens != 1 {
+		t.Errorf("ContextTokens = %d, want 1 (last message)", st.ContextTokens)
+	}
+	if st.ContextLimit != 1_000_000 {
+		t.Errorf("ContextLimit = %d, want 1000000 (promoted, not demoted by later lines)", st.ContextLimit)
+	}
+}
+
+func TestContextLimitPromotionSingleLine(t *testing.T) {
+	jsonl := `{"type":"assistant","message":{"id":"m1","model":"claude-opus-5","usage":{"input_tokens":100,"output_tokens":10,"cache_creation_input_tokens":3626,"cache_read_input_tokens":400000}},"timestamp":"2026-01-01T10:00:00Z"}
+`
+	st := tailAll(t, jsonl)
+	if st.ContextTokens != 403726 {
+		t.Errorf("ContextTokens = %d, want 403726", st.ContextTokens)
+	}
+	if st.ContextLimit != 1_000_000 {
+		t.Errorf("ContextLimit = %d, want 1000000", st.ContextLimit)
+	}
+}
+
+func TestNegativeTokensClamped(t *testing.T) {
+	jsonl := `{"type":"assistant","message":{"id":"m1","model":"claude-opus-4","usage":{"input_tokens":100,"output_tokens":-50,"cache_creation_input_tokens":-10,"cache_read_input_tokens":-1}},"timestamp":"2026-01-01T10:00:00Z"}
+`
+	st := tailAll(t, jsonl)
+	if st.TotalOut != 0 {
+		t.Errorf("TotalOut = %d, want 0 (negative clamped)", st.TotalOut)
+	}
+	if st.TotalIn != 100 {
+		t.Errorf("TotalIn = %d, want 100", st.TotalIn)
+	}
+	if st.ContextTokens != 100 {
+		t.Errorf("ContextTokens = %d, want 100 (negatives clamped)", st.ContextTokens)
+	}
+	if !reflect.DeepEqual(st.TokensPerTurn, []int64{0}) {
+		t.Errorf("TokensPerTurn = %v, want [0]", st.TokensPerTurn)
+	}
+	wantCost := 100 * 15.0 / 1e6 // only positive input priced
+	if math.Abs(st.CostUSD-wantCost) > 1e-9 {
+		t.Errorf("CostUSD = %v, want %v", st.CostUSD, wantCost)
+	}
+}
+
 func TestTokensPerTurnRingCap(t *testing.T) {
 	var content string
 	for i := 0; i < 150; i++ {

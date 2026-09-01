@@ -47,6 +47,11 @@ type Stats struct {
 // complete lines only.
 type Reader struct {
 	Offset int64
+
+	// lastUsageMsgID dedupes usage: Claude Code emits one assistant line
+	// per content block, each repeating the same cumulative message.usage.
+	// Usage/cost/Turns are accumulated once per message.id.
+	lastUsageMsgID string
 }
 
 type usage struct {
@@ -69,6 +74,7 @@ type contentItem struct {
 type line struct {
 	Type    string `json:"type"`
 	Message *struct {
+		ID      string          `json:"id"`
 		Model   string          `json:"model"`
 		Usage   *usage          `json:"usage"`
 		Content json.RawMessage `json:"content"`
@@ -104,11 +110,11 @@ func (r *Reader) Tail(path string, st *Stats) error {
 			return nil
 		}
 		r.Offset += int64(len(data))
-		reduceLine(data, st)
+		r.reduceLine(data, st)
 	}
 }
 
-func reduceLine(data []byte, st *Stats) {
+func (r *Reader) reduceLine(data []byte, st *Stats) {
 	defer func() { _ = recover() }() // never panic on hostile input
 	var ln line
 	if err := json.Unmarshal(data, &ln); err != nil {
@@ -130,7 +136,7 @@ func reduceLine(data []byte, st *Stats) {
 	}
 	switch ln.Type {
 	case "assistant":
-		reduceAssistant(&ln, st)
+		r.reduceAssistant(&ln, st)
 	case "user":
 		reduceUser(&ln, st)
 	case "ai-title":
@@ -144,8 +150,7 @@ func reduceLine(data []byte, st *Stats) {
 	}
 }
 
-func reduceAssistant(ln *line, st *Stats) {
-	st.Turns++
+func (r *Reader) reduceAssistant(ln *line, st *Stats) {
 	if ln.GitBranch != "" {
 		st.GitBranch = ln.GitBranch
 	}
@@ -160,24 +165,46 @@ func reduceAssistant(ln *line, st *Stats) {
 	}
 	if ln.Message.Model != "" {
 		st.Model = ln.Message.Model
-		st.ContextLimit = contextLimitFor(ln.Message.Model)
+		// Static map is a floor: never demote a promoted limit.
+		if lim := contextLimitFor(st.Model); lim > st.ContextLimit {
+			st.ContextLimit = lim
+		}
 	}
+	// Usage counted once per message.id: lines without an id are each
+	// treated as their own message. Turns = distinct assistant messages
+	// with usage.
 	if u := ln.Message.Usage; u != nil {
-		st.ContextTokens = u.CacheReadInputTokens + u.CacheCreationInputTokens + u.InputTokens
-		st.TotalIn += u.InputTokens
-		st.TotalOut += u.OutputTokens
-		if u.OutputTokensDetails != nil {
-			st.ThinkingTokens += u.OutputTokensDetails.ThinkingTokens
-		}
-		if p, ok := priceFor(st.Model); ok {
-			st.CostUSD += float64(u.InputTokens)*p.in/1e6 +
-				float64(u.OutputTokens)*p.out/1e6 +
-				float64(u.CacheCreationInputTokens)*p.cacheWrite/1e6 +
-				float64(u.CacheReadInputTokens)*p.cacheRead/1e6
-		}
-		st.TokensPerTurn = append(st.TokensPerTurn, u.OutputTokens)
-		if len(st.TokensPerTurn) > tokensPerTurnCap {
-			st.TokensPerTurn = st.TokensPerTurn[len(st.TokensPerTurn)-tokensPerTurnCap:]
+		id := ln.Message.ID
+		if id == "" || id != r.lastUsageMsgID {
+			if id != "" {
+				r.lastUsageMsgID = id
+			}
+			in := clampTokens(u.InputTokens)
+			out := clampTokens(u.OutputTokens)
+			cacheWrite := clampTokens(u.CacheCreationInputTokens)
+			cacheRead := clampTokens(u.CacheReadInputTokens)
+			st.Turns++
+			st.ContextTokens = cacheRead + cacheWrite + in
+			// Model strings don't distinguish 1M sessions; promote the
+			// limit when observed context exceeds 95% of the current one.
+			if float64(st.ContextTokens) > 0.95*float64(st.ContextLimit) {
+				st.ContextLimit = promoteLimit(st.ContextLimit)
+			}
+			st.TotalIn += in
+			st.TotalOut += out
+			if u.OutputTokensDetails != nil {
+				st.ThinkingTokens += clampTokens(u.OutputTokensDetails.ThinkingTokens)
+			}
+			if p, ok := priceFor(st.Model); ok {
+				st.CostUSD += float64(in)*p.in/1e6 +
+					float64(out)*p.out/1e6 +
+					float64(cacheWrite)*p.cacheWrite/1e6 +
+					float64(cacheRead)*p.cacheRead/1e6
+			}
+			st.TokensPerTurn = append(st.TokensPerTurn, out)
+			if len(st.TokensPerTurn) > tokensPerTurnCap {
+				st.TokensPerTurn = st.TokensPerTurn[len(st.TokensPerTurn)-tokensPerTurnCap:]
+			}
 		}
 	}
 	var items []contentItem
@@ -226,6 +253,14 @@ func snippet(s string, max int) string {
 		return string(r[:max])
 	}
 	return s
+}
+
+// clampTokens clamps negative token counts (hostile/buggy input) to 0.
+func clampTokens(v int64) int64 {
+	if v < 0 {
+		return 0
+	}
+	return v
 }
 
 func addUnique(list []string, v string) []string {
