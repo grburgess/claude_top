@@ -2,6 +2,7 @@
 package ui
 
 import (
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -20,11 +21,18 @@ const enumerateEvery = 5
 // confirming press.
 const interruptArmWindow = 3 * time.Second
 
+// enrichWorkers bounds the goroutine pool parsing transcripts in the
+// background after an index pass.
+const enrichWorkers = 4
+
 type tickMsg time.Time
 
 type sigMsg signalfile.Signal
 
 type termTabsMsg map[string]registry.TermTab
+
+// enrichedMsg signals that a background EnsureStats batch finished.
+type enrichedMsg struct{}
 
 // Model is the Elm-style model for the list view.
 type Model struct {
@@ -39,6 +47,9 @@ type Model struct {
 	width  int
 	height int
 	tick   int
+
+	// enriching guards against overlapping background EnsureStats batches.
+	enriching bool
 
 	// x-interrupt armed state: session ID and when it was armed.
 	armedID string
@@ -62,6 +73,9 @@ func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{tick(), enumerateTabs(m.term)}
 	if m.signals != nil {
 		cmds = append(cmds, waitSignal(m.signals))
+	}
+	if cmd := m.maybeEnrich(); cmd != nil {
+		cmds = append(cmds, cmd)
 	}
 	return tea.Batch(cmds...)
 }
@@ -111,13 +125,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.tick%enumerateEvery == 0 {
 			cmds = append(cmds, enumerateTabs(m.term))
 		}
+		if cmd := m.maybeEnrich(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 		return m, tea.Batch(cmds...)
 	case termTabsMsg:
 		m.reg.SetTermTabs(msg)
 		m.refresh()
 	case sigMsg:
 		m.refresh()
-		return m, waitSignal(m.signals)
+		return m, tea.Batch(waitSignal(m.signals), m.maybeEnrich())
+	case enrichedMsg:
+		m.enriching = false
+		m.refresh()
+		return m, m.maybeEnrich()
 	case tea.KeyMsg:
 		if m.prompting {
 			return m.updatePrompt(msg)
@@ -130,16 +151,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cursor--
 			}
 			m.clampView()
+			return m, m.maybeEnrich() // lazy-parse the newly selected row
 		case key.Matches(msg, keys.Down):
 			if m.cursor < len(m.rows)-1 {
 				m.cursor++
 			}
 			m.clampView()
+			return m, m.maybeEnrich()
 		case key.Matches(msg, keys.Mode):
 			m.mode = nextMode(m.mode)
 			m.refresh()
+			return m, m.maybeEnrich()
 		case key.Matches(msg, keys.Refresh):
 			m.refresh()
+			return m, m.maybeEnrich()
 		case key.Matches(msg, keys.Interrupt):
 			if s := m.selected(); s != nil && s.State == registry.StateLive &&
 				s.HasSignal && s.Signal.TTY != "" {
@@ -217,10 +242,70 @@ func nextMode(mode registry.Mode) registry.Mode {
 	}
 }
 
+// refresh runs the cheap index pass only; transcript parsing happens in the
+// background via maybeEnrich so first paint never waits on a Tail.
 func (m *Model) refresh() {
-	_ = m.reg.Refresh()
+	_ = m.reg.RefreshIndex()
 	m.rows = m.reg.List(m.mode)
 	m.clampView()
+}
+
+// pendingStats lists session IDs still awaiting EnsureStats: the selected
+// row first, then listed rows in view order from the scroll position
+// (visible first), then any unlisted live+recent sessions. Dead sessions
+// only appear in rows under ModeAll, so history transcripts are parsed
+// lazily — when [all] is entered or a row is selected.
+func (m Model) pendingStats() []string {
+	var ids []string
+	queued := map[string]bool{}
+	add := func(s *registry.Session) {
+		if s.StatsReady || queued[s.ID] {
+			return
+		}
+		queued[s.ID] = true
+		ids = append(ids, s.ID)
+	}
+	if sel := m.selected(); sel != nil {
+		add(sel)
+	}
+	for i := 0; i < len(m.rows); i++ {
+		add(m.rows[(m.scroll+i)%len(m.rows)])
+	}
+	for _, s := range m.reg.List(registry.ModeLiveRecent) {
+		add(s) // live+recent parse immediately regardless of view mode
+	}
+	return ids
+}
+
+// maybeEnrich starts one background EnsureStats batch over the pending
+// rows, bounded to enrichWorkers goroutines. The registry is mutex-guarded,
+// so workers call EnsureStats directly; the returned enrichedMsg just
+// triggers a re-render.
+func (m *Model) maybeEnrich() tea.Cmd {
+	if m.reg == nil || m.enriching {
+		return nil
+	}
+	ids := m.pendingStats()
+	if len(ids) == 0 {
+		return nil
+	}
+	m.enriching = true
+	reg := m.reg
+	return func() tea.Msg {
+		sem := make(chan struct{}, enrichWorkers)
+		var wg sync.WaitGroup
+		for _, id := range ids {
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(id string) {
+				defer wg.Done()
+				reg.EnsureStats(id)
+				<-sem
+			}(id)
+		}
+		wg.Wait()
+		return enrichedMsg{}
+	}
 }
 
 // clampView keeps the cursor in range; View slides the block window itself

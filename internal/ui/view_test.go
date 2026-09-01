@@ -31,8 +31,9 @@ func fixNow(t *testing.T) {
 
 func sampleSession() *registry.Session {
 	return &registry.Session{
-		ID:        "abc123",
-		HasSignal: true,
+		ID:         "abc123",
+		HasSignal:  true,
+		StatsReady: true,
 		Signal: signalfile.Signal{
 			Type:    "running",
 			Project: "claude_top",

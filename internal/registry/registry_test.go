@@ -105,6 +105,24 @@ func TestStateRecentTranscriptOnly(t *testing.T) {
 	}
 }
 
+func TestStateLiveNoSignalFreshTranscript(t *testing.T) {
+	f := newFixture(t)
+	// no signal file at all, transcript 1 min old -> live (signal-less machine)
+	f.writeTranscript(t, "ns1", now.Add(-1*time.Minute))
+	if got := f.stateOf(t, "ns1"); got != StateLive {
+		t.Errorf("state = %v, want live (no signal, fresh transcript)", got)
+	}
+}
+
+func TestStateRecentNoSignalStaleTranscript(t *testing.T) {
+	f := newFixture(t)
+	// no signal file, transcript 5 min old (not <2min) -> recent
+	f.writeTranscript(t, "ns2", now.Add(-5*time.Minute))
+	if got := f.stateOf(t, "ns2"); got != StateRecent {
+		t.Errorf("state = %v, want recent (no signal, 5m-old transcript)", got)
+	}
+}
+
 func TestStateDead(t *testing.T) {
 	f := newFixture(t)
 	f.writeSignal(t, "s5", "idle", now.Add(-2*time.Hour))

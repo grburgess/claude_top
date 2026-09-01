@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/burgessj/claude_top/internal/signalfile"
@@ -46,6 +47,7 @@ const (
 const (
 	signalFreshWindow    = 30 * time.Minute
 	liveTranscriptWindow = 10 * time.Minute
+	noSignalLiveWindow   = 2 * time.Minute // signal-less machines: very fresh transcript = live
 	recentWindow         = 30 * time.Minute
 	subagentLiveWindow   = 120 * time.Second
 )
@@ -70,21 +72,32 @@ type Session struct {
 	State           State
 	TabIndex        int // ⌘N shortcut; valid when HasTab
 	HasTab          bool
+
+	// StatsReady reports that Stats/agent counts reflect the transcript
+	// (set by EnsureStats; cleared when the transcript grows).
+	StatsReady bool
+	statsMtime time.Time // transcript mtime at last EnsureStats
 }
 
-// Registry scans the signal and projects directories on Refresh.
+// Registry scans the signal and projects directories on RefreshIndex.
+// All exported methods are safe for concurrent use (guarded by mu), so
+// EnsureStats may run from worker goroutines.
 type Registry struct {
 	SignalDir   string
 	ProjectsDir string
 	Now         func() time.Time // injectable clock
 
+	mu       sync.Mutex
 	readers  map[string]*transcript.Reader
 	sessions map[string]*Session
+	inflight map[string]bool    // EnsureStats parses in progress, by id
 	termTabs map[string]TermTab // by tty
 }
 
 // SetTermTabs replaces the tty→tab map used to attach ⌘N shortcuts.
 func (r *Registry) SetTermTabs(tabs map[string]TermTab) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.termTabs = tabs
 }
 
@@ -102,6 +115,7 @@ func New(signalDir, projectsDir string) *Registry {
 		Now:         time.Now,
 		readers:     map[string]*transcript.Reader{},
 		sessions:    map[string]*Session{},
+		inflight:    map[string]bool{},
 	}
 }
 
@@ -118,11 +132,34 @@ func DefaultProjectsDir() string {
 	return filepath.Join(home, ".claude", "projects")
 }
 
-// Refresh rescans both directories and recomputes session states.
+// Refresh rescans both directories and synchronously parses every
+// transcript (RefreshIndex + EnsureStats for all sessions). Kept for
+// callers that want the old one-shot behavior; the TUI uses RefreshIndex
+// plus background EnsureStats instead.
 func (r *Registry) Refresh() error {
+	if err := r.RefreshIndex(); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	ids := make([]string, 0, len(r.sessions))
+	for id := range r.sessions {
+		ids = append(ids, id)
+	}
+	r.mu.Unlock()
+	for _, id := range ids {
+		r.EnsureStats(id)
+	}
+	return nil
+}
+
+// RefreshIndex is the cheap pass: it stats signal files and transcript
+// mtimes only — no transcript parsing — and reclassifies session states.
+func (r *Registry) RefreshIndex() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	seen := map[string]bool{}
 	r.scanSignals(seen)
-	r.scanTranscripts(seen)
+	r.scanTranscriptIndex(seen)
 	now := r.Now()
 	for id, s := range r.sessions {
 		if !seen[id] {
@@ -131,8 +168,60 @@ func (r *Registry) Refresh() error {
 			continue
 		}
 		s.State = classify(s, now)
+		if s.TranscriptPath == "" {
+			s.StatsReady = true // nothing to parse
+		} else if s.StatsReady && s.TranscriptMtime.After(s.statsMtime) {
+			s.StatsReady = false // transcript grew: re-enrich
+		}
 	}
 	return nil
+}
+
+// EnsureStats tails the session's transcript (and counts subagents) so its
+// Stats are current, doing the expensive parse this session skipped during
+// RefreshIndex. Reader offsets persist, so repeat calls are incremental.
+// Returns false when the session is unknown, has no transcript, or a parse
+// is already in flight.
+func (r *Registry) EnsureStats(id string) bool {
+	r.mu.Lock()
+	s := r.sessions[id]
+	if s == nil || s.TranscriptPath == "" || r.inflight[id] {
+		r.mu.Unlock()
+		return false
+	}
+	r.inflight[id] = true
+	rd := r.readers[id]
+	if rd == nil {
+		rd = &transcript.Reader{}
+		r.readers[id] = rd
+	}
+	rdCopy := *rd
+	stats := s.Stats
+	path := s.TranscriptPath
+	mtime := s.TranscriptMtime
+	r.mu.Unlock()
+
+	err := rdCopy.Tail(path, &stats) // best effort
+	live, total, names := subagents.Count(
+		strings.TrimSuffix(path, ".jsonl"), subagentLiveWindow)
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.inflight, id)
+	s = r.sessions[id]
+	if s == nil {
+		return false
+	}
+	if err == nil {
+		if cur, ok := r.readers[id]; ok {
+			*cur = rdCopy
+		}
+		s.Stats = stats
+	}
+	s.LiveAgents, s.TotalAgents, s.AgentNames = live, total, names
+	s.StatsReady = true
+	s.statsMtime = mtime
+	return true
 }
 
 func (r *Registry) scanSignals(seen map[string]bool) {
@@ -155,7 +244,9 @@ func (r *Registry) scanSignals(seen map[string]bool) {
 	}
 }
 
-func (r *Registry) scanTranscripts(seen map[string]bool) {
+// scanTranscriptIndex records transcript paths and mtimes only; parsing is
+// deferred to EnsureStats. Called with r.mu held.
+func (r *Registry) scanTranscriptIndex(seen map[string]bool) {
 	slugs, err := os.ReadDir(r.ProjectsDir)
 	if err != nil {
 		return
@@ -180,14 +271,6 @@ func (r *Registry) scanTranscripts(seen map[string]bool) {
 			if info, err := f.Info(); err == nil {
 				s.TranscriptMtime = info.ModTime()
 			}
-			rd := r.readers[id]
-			if rd == nil {
-				rd = &transcript.Reader{}
-				r.readers[id] = rd
-			}
-			_ = rd.Tail(path, &s.Stats) // best effort
-			s.LiveAgents, s.TotalAgents, s.AgentNames =
-				subagents.Count(filepath.Join(slugDir, id), subagentLiveWindow)
 			seen[id] = true
 		}
 	}
@@ -210,6 +293,12 @@ func classify(s *Session, now time.Time) State {
 	if (signalFresh && transcriptFresh) || (s.HasSignal && s.Signal.Type == "running") {
 		return StateLive
 	}
+	// Signal-less machines (no iterm2-tab-status plugin): a very fresh
+	// transcript alone is live — no attention/working granularity.
+	if !s.HasSignal && !s.TranscriptMtime.IsZero() &&
+		now.Sub(s.TranscriptMtime) < noSignalLiveWindow {
+		return StateLive
+	}
 	if !s.TranscriptMtime.IsZero() && now.Sub(s.TranscriptMtime) < recentWindow {
 		return StateRecent
 	}
@@ -217,8 +306,10 @@ func classify(s *Session, now time.Time) State {
 }
 
 // List returns sessions matching mode, ordered live-first then by most
-// recent activity, then by ID.
+// recent activity, then by ID. Sessions are copies, safe to read while
+// background EnsureStats calls mutate the registry.
 func (r *Registry) List(mode Mode) []*Session {
+	r.mu.Lock()
 	var out []*Session
 	for _, s := range r.sessions {
 		switch mode {
@@ -233,8 +324,10 @@ func (r *Registry) List(mode Mode) []*Session {
 		}
 		tab, ok := r.termTabs[s.Signal.TTY]
 		s.TabIndex, s.HasTab = tab.TabIndex, ok && s.Signal.TTY != ""
-		out = append(out, s)
+		c := *s
+		out = append(out, &c)
 	}
+	r.mu.Unlock()
 	sort.Slice(out, func(i, j int) bool {
 		a, b := out[i], out[j]
 		if a.State != b.State {

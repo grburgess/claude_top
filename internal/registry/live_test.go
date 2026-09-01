@@ -151,9 +151,10 @@ func TestLiveTranscriptOnlySessionAppears(t *testing.T) {
 	if s.HasSignal {
 		t.Error("HasSignal = true for transcript-only session")
 	}
-	// no signal file, so a fresh transcript alone classifies as recent
-	if s.State != StateRecent {
-		t.Errorf("state = %v, want recent (fresh transcript, no signal)", s.State)
+	// no signal file (machine without the iterm2-tab-status plugin): a
+	// just-written transcript alone classifies as live
+	if s.State != StateLive {
+		t.Errorf("state = %v, want live (fresh transcript, no signal)", s.State)
 	}
 	if s.Stats.Turns != 1 {
 		t.Errorf("Turns = %d, want 1", s.Stats.Turns)

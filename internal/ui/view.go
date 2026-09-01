@@ -28,6 +28,7 @@ type blockPhase int
 
 const (
 	phaseWorking blockPhase = iota
+	phaseLive               // live without a signal file: no attention/working granularity
 	phaseIdle
 	phaseAttention
 	phaseRecent
@@ -48,8 +49,9 @@ func phaseOf(s *registry.Session) blockPhase {
 		case "idle":
 			return phaseIdle
 		}
+		return phaseWorking
 	}
-	return phaseWorking
+	return phaseLive
 }
 
 // RenderBlock renders one session as a multi-line toolbelt-style block,
@@ -102,6 +104,8 @@ func blockLine1(s *registry.Session, cw int, sel bool, tick int, phase blockPhas
 	case phaseWorking:
 		dotStyle = stWorking
 		glyph, glyphStyle = spinnerFrames[tick%len(spinnerFrames)], stWorking
+	case phaseLive:
+		dotStyle = stWorking // amber dot; no working/attention granularity
 	case phaseIdle:
 		dotStyle = stIdle
 	case phaseAttention:
@@ -145,6 +149,8 @@ func blockLine2(cw int, sel bool, phase blockPhase) string {
 	switch phase {
 	case phaseWorking:
 		word, style = "working", stWorking
+	case phaseLive:
+		word, style = "live", stWorking
 	case phaseAttention:
 		word, style = "attention", stAttention
 	case phaseRecent:
@@ -213,19 +219,37 @@ func detailCard(s *registry.Session, cw int) []string {
 	if inner < 10 {
 		inner = 10
 	}
-	colA := []string{
-		cardLabel.Render("context ") + gauge24(s) + " " + cardValue.Render(contextText(s)),
-		cardLabel.Render("cost    ") + cardAmber.Render(fmt.Sprintf("$%.2f", s.Stats.CostUSD)) +
-			cardDim.Render(" · ") + cardValue.Render(modelEffort(s)),
-		cardLabel.Render("where   ") + cardDim.Render(whereText(s)),
-		cardLabel.Render("perm    ") + cardValue.Render(orDash(s.Stats.PermissionMode)),
-	}
-	colB := []string{
-		cardLabel.Render("skills  ") + cardAmber.Render(orDash(strings.Join(s.Stats.Skills, ", "))),
-		cardLabel.Render("mcp     ") + cardValue.Render(orDash(strings.Join(s.Stats.MCPServers, ", "))),
-		cardLabel.Render("agents  ") + agentsText(s),
-		cardLabel.Render("turns   ") + cardSpark.Render(sparkline(s.Stats.TokensPerTurn, sparkTurns)) +
-			cardDim.Render(" · ") + cardValue.Render(sessionText(s)),
+	var colA, colB []string
+	if !s.StatsReady {
+		// Transcript not parsed yet: "…" placeholders until EnsureStats lands.
+		dots := cardDim.Render("…")
+		colA = []string{
+			cardLabel.Render("context ") + dots,
+			cardLabel.Render("cost    ") + dots,
+			cardLabel.Render("where   ") + cardDim.Render(whereText(s)),
+			cardLabel.Render("perm    ") + dots,
+		}
+		colB = []string{
+			cardLabel.Render("skills  ") + dots,
+			cardLabel.Render("mcp     ") + dots,
+			cardLabel.Render("agents  ") + dots,
+			cardLabel.Render("turns   ") + dots,
+		}
+	} else {
+		colA = []string{
+			cardLabel.Render("context ") + gauge24(s) + " " + cardValue.Render(contextText(s)),
+			cardLabel.Render("cost    ") + cardAmber.Render(fmt.Sprintf("$%.2f", s.Stats.CostUSD)) +
+				cardDim.Render(" · ") + cardValue.Render(modelEffort(s)),
+			cardLabel.Render("where   ") + cardDim.Render(whereText(s)),
+			cardLabel.Render("perm    ") + cardValue.Render(orDash(s.Stats.PermissionMode)),
+		}
+		colB = []string{
+			cardLabel.Render("skills  ") + cardAmber.Render(orDash(strings.Join(s.Stats.Skills, ", "))),
+			cardLabel.Render("mcp     ") + cardValue.Render(orDash(strings.Join(s.Stats.MCPServers, ", "))),
+			cardLabel.Render("agents  ") + agentsText(s),
+			cardLabel.Render("turns   ") + cardSpark.Render(sparkline(s.Stats.TokensPerTurn, sparkTurns)) +
+				cardDim.Render(" · ") + cardValue.Render(sessionText(s)),
+		}
 	}
 
 	var rows []string
@@ -574,11 +598,14 @@ func (m Model) View() string {
 
 // headerView is a slim single line: name, counts, sessions, cost, mode, clock.
 func (m Model) headerView() string {
-	var working, idle, attn int
+	var working, idle, attn, indexing int
 	var costToday, costListed float64
 	for _, s := range m.rows {
 		costToday += s.Stats.CostTodayUSD
 		costListed += s.Stats.CostUSD
+		if !s.StatsReady {
+			indexing++
+		}
 		if s.State != registry.StateLive {
 			continue
 		}
@@ -603,6 +630,9 @@ func (m Model) headerView() string {
 		headerMeta.Render(fmt.Sprintf("%d sessions", len(m.rows))) + sep +
 		cost + sep +
 		appName.Render("["+modeLabel(m.mode)+"]")
+	if indexing > 0 {
+		left += sep + headerMeta.Render(fmt.Sprintf("indexing %d…", indexing))
+	}
 	clock := clockStyle.Render(now().Format("15:04:05")) + " "
 	gap := m.width - lipgloss.Width(left) - lipgloss.Width(clock)
 	if gap < 1 {
