@@ -10,7 +10,7 @@ import (
 // TestRealFixtures runs the reducer over any transcripts placed under
 // testdata/transcripts/. Skipped when the directory does not exist.
 func TestRealFixtures(t *testing.T) {
-	dir := filepath.Join("testdata", "transcripts")
+	dir := filepath.Join("..", "..", "testdata", "transcripts")
 	if _, err := os.Stat(dir); err != nil {
 		t.Skip("no testdata/transcripts dir")
 	}
