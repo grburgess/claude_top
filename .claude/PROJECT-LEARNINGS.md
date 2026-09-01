@@ -14,7 +14,7 @@ docs/research/2026-09-01-claude-top.md; no code yet.
 
 | loop | sessions | criteria | status | last touched | flags |
 |---|---|---|---|---|---|
-| claude-top-build | 0 | 0/6 | running | 2026-09-01 | — |
+| claude-top-build | 1 | 2/6 (C3,C5; C1/C2/C4 partial) | running | 2026-09-01 | — |
 
 ## 3 Cross-loop verified facts
 

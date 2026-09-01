@@ -6,7 +6,7 @@ away.
 
 <!-- memory ladder: 1 open failure -> 2 investigated -> 3 verified fact -> 4 general rule -> 5 consulted next session -->
 
-Loop status: running
+Loop status: complete 2026-09-01
 
 ## Verified facts
 <!-- stage 3 — stop guessing about these.
@@ -67,6 +67,10 @@ Loop status: running
 ## Iteration log
 <!-- one line per iteration:
      <session>.<iter> · class:<label> · tier:<used> · maker: <action> · verdict: PASS | gaps(<n>): <short> -->
+- 5.4 · class:soak-coexistence · tier:orchestrator-in-band · maker: 30-min soak vs live adapter · verdict: C6 PASS (write FDs=0 over 30 checks, signal mtimes advanced) → ALL 6 GOAL §2 criteria PASS, loop complete
+- 5.3 · class:live-probe-scripts+soak-coexistence · tier:opus · maker: C1 timed live tests (measured 1.5ms/1.2ms vs 2s deadline; orchestrator re-ran PASS) + scripts/soak.sh · verdict: C1 PASS; C6 soak launched in background (30min)
+- 5.2 · class:live-probe-scripts · tier:orchestrator-in-band · maker: sandboxed fake-session probe (scratch cat tab + synthetic signals, claude_top in tmux w/ temp dirs) · verdict: C2 PASS (live jump focused target tty; dead reopen created tab w/ cd+`claude -r` prefill — tabs 11→12, prefill=true), C4 PASS (h cycle, x-x ^C delivered, p text arrived submitted); NOTE probe races: allow ≥1 UI tick between keypress and assert
+- 5.1 · class:ui-detail-pane+transcript-reducers · tier:ceiling(fable) · maker: x armed-interrupt, p minibuffer, ReopenAt, CostTodayUSD + per-mode header (64 tests) · verdict: offline gates PASS (orchestrator re-ran, merged d2f8376)
 - 4.1 · class:ui-list-view+ui-detail-pane · tier:ceiling(fable) · maker: toolbelt-style blocks (dot/Chat/spinner/title/⌘N/state/snippet), inline detail card on selection (gauge/cost/skills/mcp/agents/sparkline), ⌘N tty→tab join via Enumerate every 5s, 54 tests · verdict: offline gates PASS (orchestrator re-ran); user re-smoke pending
 - 3.2 · class:ui-list-view · tier:— · maker: (user smoke) · verdict: gaps(3) from user: not slick, doesn't mimic iTerm toolbelt session blocks, selected row must expand with detail → folded into 4.1 with transcribed toolbelt visual spec
 - 3.1 · class:transcript-reducers+ui-list-view · tier:ceiling(fable) · maker: dedup-by-message.id fix, context-limit promotion, negative clamp, full Bubble Tea list view (header/rows/gauge/responsive/keys, 37 tests) · verdict: offline gates PASS (orchestrator re-ran go test independently; corrected inspect: 68 turns $64.19 ctx 285k/1M); TUI human smoke pending (no tty in maker/orchestrator context)
@@ -80,23 +84,29 @@ Loop status: running
 
 ## Auto mode
 - status: on
-- budget spent: 4 / 25
+- budget spent: 7 / 25
 - session-in-progress: no
 - last wakeup: scheduled @ session-1 end (1800s)
-- halt reason: none
+- halt reason: loop complete
 
 ## Memory check
+- 2026-09-01 s2: soak + probe findings promoted; Verified-fact rows name what they pass (GOAL §2 criteria), per lessons 2026-08-19; probe-race rule distilled to global ledger. No stale recalls.
 - 2026-09-01 s1: verified findings promoted to Verified facts (5 rows); no ≥2× patterns yet; Consult items fresh; classifier-block failure investigated→verified same session. No stale recalls.
 
 ## Last session
 <!-- Session <k> of <max sessions> · <YYYY-MM-DD> · what happened · criteria <n>/<m> passing
      Next: <exact next action> -->
-Session 1 of 5 · 2026-09-01 · 4 iterations: spikes (RQ1 all iTerm verbs PASS, RQ2
+Session 2 of 5 · 2026-09-01 · 4 iterations (5.1–5.4): x/p/reopen actions + truthful
+header, live probes C2/C4 PASS, C1 timed tests (1.5ms), C6 soak PASS. ALL 6 GOAL §2
+criteria PASS — loop COMPLETE 2026-09-01. Binary on PATH (~/.local/bin), repo
+github.com/grburgess/claude_top private.
+Prior session — Session 1 of 5 · 2026-09-01 · 4 iterations: spikes (RQ1 all iTerm verbs PASS, RQ2
 subagents-dir mechanism), Go scaffold (5 pkgs + --inspect), reducer fixes (usage
 dedup, ctx-limit promotion, clamp) + list view, toolbelt-style redesign + inline
 detail card + ⌘N join. Repo published private github.com/grburgess/claude_top
 (fixtures gitignored, local-only). Criteria: C3 PASS, C5 PASS (incl. 3-version
 fixtures, user-run), C1/C2/C4 partial (render+jump verbs proven; 2s test, row-level
 jump probe, k/p actions missing), C6 not run.
-Next: header per-mode counts + real '$ today'; user UX call on history visibility;
+Next: header per-mode counts + real '$ today'; UX DECIDED (user, 2026-09-01): keep
+3-mode h-cycle, history hidden unless manually called — no always-visible dimmed rows;
 k interrupt + p prompt + closed-session reopen; then C1/C2/C4 probes + C6 soak.
