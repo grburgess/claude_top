@@ -29,6 +29,10 @@ Tab jumping, interrupt, and prompt dispatch go through plain `osascript` against
 
 Requires Go ≥ 1.22 and macOS with iTerm2 (the monitor itself runs anywhere; the jump/interrupt actions are iTerm2-specific).
 
+**Prerequisite for the live view:** the default `[live]` mode is driven by signal files from the [iterm2-tab-status](https://github.com/jaspersui/claude-code-iterm2-tab-status) Claude Code plugin — install it first (`/plugin install iterm2-tab-status` in Claude Code, then its `/iterm2-tab-status:setup`). Without it, sessions lack status signals and the default view appears **empty**; your sessions are still there under `h` → `[all]`, classified from transcript mtimes alone.
+
+**Known first-launch cost:** startup currently parses every transcript under `~/.claude/projects/` before first paint — on a machine with a long Claude history this can take tens of seconds. One-time per launch; lazy/async loading is planned.
+
 ```sh
 git clone https://github.com/grburgess/claude_top.git
 cd claude_top
