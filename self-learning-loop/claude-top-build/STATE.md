@@ -35,6 +35,7 @@ Loop status: running
 ## Open failures
 <!-- stages 1–2 — investigate next session.
      Format: <YYYY-MM-DD> · symptom · hypothesis. -->
+- 2026-09-01 · blocked: classifier — combined spike maker (osascript iTerm-driving + transcript harvest) denied at dispatch · hypothesis: terminal-automation + user-data-harvest combo trips it; mitigation: orchestrator runs osascript probes in-band, read-only analysis split to its own maker.
 
 ## Iteration log
 <!-- one line per iteration:
