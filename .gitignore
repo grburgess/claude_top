@@ -1,0 +1,10 @@
+# binary
+/claude_top
+
+# worktrees + editor droppings
+.claude/worktrees/
+*.swp
+
+# real-transcript fixtures — never commit (local data)
+testdata/transcripts/
+testdata/signals/
