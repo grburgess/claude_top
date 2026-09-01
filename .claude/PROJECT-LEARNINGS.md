@@ -63,7 +63,7 @@ docs/research/2026-09-01-claude-top.md; graph node research-plan-claude-top.
   rule) · verdict:HOLDS-candidates, user-approved 2026-09-01 · status:applied
 
 ## 8 Ideation / candidate next loops
-- cosmetic: tmux-owned sessions render window index as ⌘N (iTerm connotation) — label per backend (e.g. ⊞N or win:N).
+
 - minor: reducer counts model:"<synthetic>" lines as turns (7 exist across 525 files; cost impact $0 — unknown-model pricing is zero) — one-line fix candidate for v2.
 - claude_top v2: theming/config file; per-session token-burn timeline view; Linux/
   tmux jump backend; sanitized-fixture generator for the Cape open-source release.
