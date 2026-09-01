@@ -21,6 +21,9 @@ const enumerateEvery = 5
 // confirming press.
 const interruptArmWindow = 3 * time.Second
 
+// statusExpiry is how long a transient action-error status line stays up.
+const statusExpiry = 3 * time.Second
+
 // enrichWorkers bounds the goroutine pool parsing transcripts in the
 // background after an index pass.
 const enrichWorkers = 4
@@ -29,7 +32,13 @@ type tickMsg time.Time
 
 type sigMsg signalfile.Signal
 
-type termTabsMsg map[string]registry.TermTab
+type termTabsMsg struct {
+	tabs     map[string]registry.TermTab
+	backends map[string]string // tty → backend name
+}
+
+// actionErrMsg carries a failed terminal-action error to the status line.
+type actionErrMsg struct{ err error }
 
 // enrichedMsg signals that a background EnsureStats batch finished.
 type enrichedMsg struct{}
@@ -37,7 +46,7 @@ type enrichedMsg struct{}
 // Model is the Elm-style model for the list view.
 type Model struct {
 	reg     *registry.Registry
-	term    bridge.ITerm
+	term    bridge.Backend
 	signals <-chan signalfile.Signal
 
 	mode   registry.Mode
@@ -55,6 +64,13 @@ type Model struct {
 	armedID string
 	armedAt time.Time
 
+	// transient status line for action errors; empty when none.
+	statusMsg string
+	statusAt  time.Time
+
+	// ttyBackend names the backend owning each tty (from Enumerate).
+	ttyBackend map[string]string
+
 	// p prompt minibuffer state.
 	prompting   bool
 	promptTTY   string
@@ -63,7 +79,7 @@ type Model struct {
 }
 
 // New builds the list-view model; signals may be nil (no watcher).
-func New(reg *registry.Registry, term bridge.ITerm, signals <-chan signalfile.Signal) Model {
+func New(reg *registry.Registry, term bridge.Backend, signals <-chan signalfile.Signal) Model {
 	m := Model{reg: reg, term: term, signals: signals, mode: registry.ModeLive}
 	m.refresh()
 	return m
@@ -95,8 +111,8 @@ func waitSignal(ch <-chan signalfile.Signal) tea.Cmd {
 }
 
 // enumerateTabs runs bridge.Enumerate off the Update loop (it execs
-// osascript) and delivers the tty→tab map as a message.
-func enumerateTabs(term bridge.ITerm) tea.Cmd {
+// osascript/tmux) and delivers the tty→tab and tty→backend maps as a message.
+func enumerateTabs(term bridge.Backend) tea.Cmd {
 	if term == nil {
 		return nil
 	}
@@ -106,10 +122,23 @@ func enumerateTabs(term bridge.ITerm) tea.Cmd {
 			return nil
 		}
 		tabs := make(map[string]registry.TermTab, len(ss))
+		backends := make(map[string]string, len(ss))
 		for _, s := range ss {
 			tabs[s.TTY] = registry.TermTab{WindowID: s.WindowID, TabIndex: s.TabIndex}
+			backends[s.TTY] = s.BackendName
 		}
-		return termTabsMsg(tabs)
+		return termTabsMsg{tabs: tabs, backends: backends}
+	}
+}
+
+// actionCmd runs a terminal action off the Update loop and surfaces its
+// error (if any) on the status line.
+func actionCmd(do func() error) tea.Cmd {
+	return func() tea.Msg {
+		if err := do(); err != nil {
+			return actionErrMsg{err}
+		}
+		return nil
 	}
 }
 
@@ -120,6 +149,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clampView()
 	case tickMsg:
 		m.tick++
+		if m.statusMsg != "" && now().Sub(m.statusAt) > statusExpiry {
+			m.statusMsg = ""
+		}
 		m.refresh()
 		cmds := []tea.Cmd{tick()}
 		if m.tick%enumerateEvery == 0 {
@@ -130,8 +162,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 	case termTabsMsg:
-		m.reg.SetTermTabs(msg)
+		m.reg.SetTermTabs(msg.tabs)
+		m.ttyBackend = msg.backends
 		m.refresh()
+	case actionErrMsg:
+		m.statusMsg = msg.err.Error()
+		m.statusAt = now()
 	case sigMsg:
 		m.refresh()
 		return m, tea.Batch(waitSignal(m.signals), m.maybeEnrich())
@@ -172,7 +208,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.armedID = ""
 					tty := s.Signal.TTY
 					term := m.term
-					return m, func() tea.Msg { _ = term.Interrupt(tty); return nil }
+					return m, actionCmd(func() error { return term.Interrupt(tty) })
 				}
 				m.armedID, m.armedAt = s.ID, now()
 			}
@@ -191,12 +227,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if s.State == registry.StateLive {
 					if s.HasSignal && s.Signal.TTY != "" {
 						tty := s.Signal.TTY
-						return m, func() tea.Msg { _ = term.FocusTTY(tty); return nil }
+						return m, actionCmd(func() error { return term.FocusTTY(tty) })
 					}
 					break
 				}
 				cwd, id := s.Signal.Cwd, s.ID
-				return m, func() tea.Msg { _ = term.ReopenAt(cwd, "claude -r "+id); return nil }
+				return m, actionCmd(func() error { return term.ReopenAt(cwd, "claude -r "+id) })
 			}
 		}
 	}
@@ -218,7 +254,7 @@ func (m Model) updatePrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		tty := m.promptTTY
 		term := m.term
-		return m, func() tea.Msg { _ = term.SendText(tty, text, true); return nil }
+		return m, actionCmd(func() error { return term.SendText(tty, text, true) })
 	}
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
@@ -245,6 +281,10 @@ func nextMode(mode registry.Mode) registry.Mode {
 // refresh runs the cheap index pass only; transcript parsing happens in the
 // background via maybeEnrich so first paint never waits on a Tail.
 func (m *Model) refresh() {
+	if m.reg == nil { // tests drive Model without a registry
+		m.clampView()
+		return
+	}
 	_ = m.reg.RefreshIndex()
 	m.rows = m.reg.List(m.mode)
 	m.clampView()

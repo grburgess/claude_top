@@ -47,7 +47,8 @@ func runTUI() error {
 	if err != nil {
 		signals = nil // no signal dir: tick-only refresh
 	}
-	m := ui.New(reg, bridge.NewOSAITerm(), signals)
+	term := bridge.NewRouter(bridge.NewOSAITerm(), bridge.NewTmuxBackend(), bridge.NewFallbackBackend())
+	m := ui.New(reg, term, signals)
 	_, err = tea.NewProgram(m, tea.WithAltScreen()).Run()
 	return err
 }

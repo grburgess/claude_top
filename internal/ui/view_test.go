@@ -75,7 +75,7 @@ func idleSession() *registry.Session {
 
 func blockLinesOf(t *testing.T, s *registry.Session, width int, selected bool, tick int) []string {
 	t.Helper()
-	block := RenderBlock(s, width, selected, tick)
+	block := RenderBlock(s, width, selected, tick, "")
 	lines := strings.Split(block, "\n")
 	for _, ln := range lines {
 		if w := lipgloss.Width(ln); w > width {
@@ -109,7 +109,7 @@ func TestRenderBlockSpinnerRotates(t *testing.T) {
 	fixNow(t)
 	s := sampleSession()
 	for tick, glyph := range spinnerFrames {
-		if b := RenderBlock(s, 100, false, tick); !strings.Contains(b, glyph) {
+		if b := RenderBlock(s, 100, false, tick, ""); !strings.Contains(b, glyph) {
 			t.Errorf("tick %d: missing spinner frame %q", tick, glyph)
 		}
 	}
@@ -224,7 +224,7 @@ func TestRenderBlockNoTabOmitsShortcut(t *testing.T) {
 	fixNow(t)
 	s := sampleSession()
 	s.HasTab = false
-	if b := RenderBlock(s, 100, false, 0); strings.Contains(b, "⌘") {
+	if b := RenderBlock(s, 100, false, 0, ""); strings.Contains(b, "⌘") {
 		t.Errorf("block shows ⌘ without a tab: %q", b)
 	}
 }
@@ -233,8 +233,20 @@ func TestAttentionDotPulses(t *testing.T) {
 	fixNow(t)
 	s := sampleSession()
 	s.Signal.Type = "attention"
-	if RenderBlock(s, 100, false, 0) == RenderBlock(s, 100, false, 1) {
+	if RenderBlock(s, 100, false, 0, "") == RenderBlock(s, 100, false, 1, "") {
 		t.Error("attention block identical on odd/even ticks, want pulse")
+	}
+}
+
+func TestRenderBlockWhereLineShowsBackend(t *testing.T) {
+	fixNow(t)
+	b := RenderBlock(idleSession(), 120, true, 0, "tmux")
+	if !strings.Contains(b, "/Users/x/claude_top · tmux") {
+		t.Errorf("where line missing backend name:\n%s", b)
+	}
+	b = RenderBlock(idleSession(), 120, true, 0, "")
+	if strings.Contains(b, "· tmux") || strings.Contains(b, "· iterm") {
+		t.Errorf("unknown backend must not be named:\n%s", b)
 	}
 }
 

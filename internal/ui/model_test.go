@@ -97,6 +97,32 @@ func TestInterruptIgnoredForNonLive(t *testing.T) {
 	}
 }
 
+func TestActionErrorSurfacesOnStatusLine(t *testing.T) {
+	at := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	setNow(t, &at)
+	m, mock := testModel(sampleSession())
+	mock.Err = bridge.ErrUnsupported
+	_, cmd := press(t, m, tea.KeyMsg{Type: tea.KeyEnter}) // FocusTTY fails
+	if cmd == nil {
+		t.Fatal("enter returned no cmd")
+	}
+	msg := cmd()
+	aem, ok := msg.(actionErrMsg)
+	if !ok {
+		t.Fatalf("cmd msg = %T, want actionErrMsg", msg)
+	}
+	m, _ = press(t, m, aem)
+	if !strings.Contains(m.View(), "unsupported") {
+		t.Error("action error missing from status line")
+	}
+	// Expires after statusExpiry on the next tick.
+	at = at.Add(statusExpiry + time.Second)
+	m, _ = press(t, m, tickMsg(at))
+	if strings.Contains(m.View(), "unsupported") {
+		t.Error("status line did not expire")
+	}
+}
+
 func TestPromptDispatchSendsText(t *testing.T) {
 	m, mock := testModel(sampleSession())
 	m, _ = press(t, m, keyRunes("p"))

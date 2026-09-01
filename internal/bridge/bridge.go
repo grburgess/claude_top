@@ -8,17 +8,18 @@ import (
 	"strings"
 )
 
-// TermSession is one iTerm2 session (pane) discovered by Enumerate.
+// TermSession is one terminal session (pane/tab) discovered by Enumerate.
 type TermSession struct {
-	WindowID  string
-	TabIndex  int
-	SessionID string
-	TTY       string
-	Name      string
+	WindowID    string
+	TabIndex    int
+	SessionID   string // backend-native pane/session id (iTerm session id, tmux pane id)
+	TTY         string
+	Title       string
+	BackendName string // "iterm", "tmux", ...
 }
 
-// ITerm is the terminal control surface.
-type ITerm interface {
+// Backend is the terminal-agnostic control surface.
+type Backend interface {
 	Enumerate() ([]TermSession, error)
 	FocusTTY(tty string) error
 	SendText(tty, text string, submit bool) error
@@ -27,7 +28,10 @@ type ITerm interface {
 	ReopenAt(cwd, resumeCmd string) error
 }
 
-// OSAITerm implements ITerm with osascript. The run field is injectable
+// ITerm is the legacy name for Backend.
+type ITerm = Backend
+
+// OSAITerm implements Backend with osascript. The run field is injectable
 // for tests; nil means exec osascript.
 type OSAITerm struct {
 	run func(script string) (string, error)
@@ -91,11 +95,12 @@ func parseEnumerate(out string) []TermSession {
 		}
 		idx, _ := strconv.Atoi(parts[1])
 		sessions = append(sessions, TermSession{
-			WindowID:  parts[0],
-			TabIndex:  idx,
-			SessionID: parts[2],
-			TTY:       parts[3],
-			Name:      parts[4],
+			WindowID:    parts[0],
+			TabIndex:    idx,
+			SessionID:   parts[2],
+			TTY:         parts[3],
+			Title:       parts[4],
+			BackendName: "iterm",
 		})
 	}
 	return sessions

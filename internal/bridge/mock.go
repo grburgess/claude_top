@@ -9,7 +9,7 @@ type MockITerm struct {
 	Err      error         // returned by every method when set
 }
 
-var _ ITerm = (*MockITerm)(nil)
+var _ Backend = (*MockITerm)(nil)
 
 func (m *MockITerm) record(format string, args ...any) {
 	m.Calls = append(m.Calls, fmt.Sprintf(format, args...))

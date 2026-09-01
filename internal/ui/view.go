@@ -56,8 +56,9 @@ func phaseOf(s *registry.Session) blockPhase {
 
 // RenderBlock renders one session as a multi-line toolbelt-style block,
 // never wider than width. Selected blocks gain a left accent bar, a faint
-// background tint and an inline bordered detail card.
-func RenderBlock(s *registry.Session, width int, selected bool, tick int) string {
+// background tint and an inline bordered detail card; backend (may be "")
+// names the terminal backend owning the session's tty for the detail card.
+func RenderBlock(s *registry.Session, width int, selected bool, tick int, backend string) string {
 	cw := width - gutterW
 	if cw < 10 {
 		cw = 10
@@ -69,7 +70,7 @@ func RenderBlock(s *registry.Session, width int, selected bool, tick int) string
 	}
 	if selected {
 		lines = append(lines, snippetLinesFor(s, cw, true)...)
-		lines = append(lines, detailCard(s, cw)...)
+		lines = append(lines, detailCard(s, cw, backend)...)
 	}
 	for i, ln := range lines {
 		lines[i] = gutter(selected) + ln
@@ -214,7 +215,7 @@ func wrapWords(s string, w, maxLines int) []string {
 }
 
 // detailCard renders the bordered inline expansion for the selected block.
-func detailCard(s *registry.Session, cw int) []string {
+func detailCard(s *registry.Session, cw int, backend string) []string {
 	inner := cw - 4 // "│ " + " │"
 	if inner < 10 {
 		inner = 10
@@ -226,7 +227,7 @@ func detailCard(s *registry.Session, cw int) []string {
 		colA = []string{
 			cardLabel.Render("context ") + dots,
 			cardLabel.Render("cost    ") + dots,
-			cardLabel.Render("where   ") + cardDim.Render(whereText(s)),
+			cardLabel.Render("where   ") + cardDim.Render(whereText(s, backend)),
 			cardLabel.Render("perm    ") + dots,
 		}
 		colB = []string{
@@ -240,7 +241,7 @@ func detailCard(s *registry.Session, cw int) []string {
 			cardLabel.Render("context ") + gauge24(s) + " " + cardValue.Render(contextText(s)),
 			cardLabel.Render("cost    ") + cardAmber.Render(fmt.Sprintf("$%.2f", s.Stats.CostUSD)) +
 				cardDim.Render(" · ") + cardValue.Render(modelEffort(s)),
-			cardLabel.Render("where   ") + cardDim.Render(whereText(s)),
+			cardLabel.Render("where   ") + cardDim.Render(whereText(s, backend)),
 			cardLabel.Render("perm    ") + cardValue.Render(orDash(s.Stats.PermissionMode)),
 		}
 		colB = []string{
@@ -317,7 +318,7 @@ func modelEffort(s *registry.Session) string {
 	return m
 }
 
-func whereText(s *registry.Session) string {
+func whereText(s *registry.Session, backend string) string {
 	var parts []string
 	if s.Signal.Project != "" {
 		parts = append(parts, s.Signal.Project)
@@ -327,6 +328,9 @@ func whereText(s *registry.Session) string {
 	}
 	if s.Signal.Cwd != "" {
 		parts = append(parts, s.Signal.Cwd)
+	}
+	if backend != "" {
+		parts = append(parts, backend)
 	}
 	return orDash(strings.Join(parts, " · "))
 }
@@ -543,6 +547,9 @@ func (m Model) View() string {
 	}
 	header := m.headerView()
 	footer := footerStyle.Render(" ↑↓ move · ⏎ jump/reopen · x interrupt · p prompt · h view · q quit")
+	if m.statusMsg != "" {
+		footer = stAttention.Render(" ✗ " + m.statusMsg)
+	}
 	if m.prompting {
 		footer = cardAmber.Render(" prompt → "+m.promptTitle+" ") + m.input.View()
 	}
@@ -557,7 +564,7 @@ func (m Model) View() string {
 	} else {
 		blocks := make([][]string, len(m.rows))
 		for i, s := range m.rows {
-			blocks[i] = strings.Split(RenderBlock(s, m.width, i == m.cursor, m.tick), "\n")
+			blocks[i] = strings.Split(RenderBlock(s, m.width, i == m.cursor, m.tick, m.ttyBackend[s.Signal.TTY]), "\n")
 			if i == m.cursor && m.interruptArmed(s) {
 				blocks[i] = append(blocks[i], gutter(true)+
 					tinted(stAttention, true).Render("  press x again to interrupt"))

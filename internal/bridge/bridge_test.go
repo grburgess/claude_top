@@ -18,8 +18,8 @@ func TestParseEnumerate(t *testing.T) {
 	out := "1\t1\tS-A\t/dev/ttys001\tzsh\n1\t2\tS-B\t/dev/ttys002\tclaude\n\n"
 	got := parseEnumerate(out)
 	want := []TermSession{
-		{WindowID: "1", TabIndex: 1, SessionID: "S-A", TTY: "/dev/ttys001", Name: "zsh"},
-		{WindowID: "1", TabIndex: 2, SessionID: "S-B", TTY: "/dev/ttys002", Name: "claude"},
+		{WindowID: "1", TabIndex: 1, SessionID: "S-A", TTY: "/dev/ttys001", Title: "zsh", BackendName: "iterm"},
+		{WindowID: "1", TabIndex: 2, SessionID: "S-B", TTY: "/dev/ttys002", Title: "claude", BackendName: "iterm"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %+v want %+v", got, want)
