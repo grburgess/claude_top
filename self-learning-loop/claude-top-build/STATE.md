@@ -80,13 +80,23 @@ Loop status: running
 
 ## Auto mode
 - status: on
-- budget spent: 0 / 25
-- session-in-progress: yes
-- last wakeup: none
+- budget spent: 4 / 25
+- session-in-progress: no
+- last wakeup: scheduled @ session-1 end (1800s)
 - halt reason: none
+
+## Memory check
+- 2026-09-01 s1: verified findings promoted to Verified facts (5 rows); no ≥2× patterns yet; Consult items fresh; classifier-block failure investigated→verified same session. No stale recalls.
 
 ## Last session
 <!-- Session <k> of <max sessions> · <YYYY-MM-DD> · what happened · criteria <n>/<m> passing
      Next: <exact next action> -->
-None yet — session 1 pending. First work items: RQ1 osascript tty→session probe,
-RQ2 sidechain disk-structure inspection, fixture harvest from real transcripts.
+Session 1 of 5 · 2026-09-01 · 4 iterations: spikes (RQ1 all iTerm verbs PASS, RQ2
+subagents-dir mechanism), Go scaffold (5 pkgs + --inspect), reducer fixes (usage
+dedup, ctx-limit promotion, clamp) + list view, toolbelt-style redesign + inline
+detail card + ⌘N join. Repo published private github.com/grburgess/claude_top
+(fixtures gitignored, local-only). Criteria: C3 PASS, C5 PASS (incl. 3-version
+fixtures, user-run), C1/C2/C4 partial (render+jump verbs proven; 2s test, row-level
+jump probe, k/p actions missing), C6 not run.
+Next: header per-mode counts + real '$ today'; user UX call on history visibility;
+k interrupt + p prompt + closed-session reopen; then C1/C2/C4 probes + C6 soak.
