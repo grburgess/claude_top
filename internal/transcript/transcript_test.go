@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func writeTranscript(t *testing.T, content string) string {
@@ -302,6 +303,32 @@ func TestNegativeTokensClamped(t *testing.T) {
 	wantCost := 100 * 15.0 / 1e6 // only positive input priced
 	if math.Abs(st.CostUSD-wantCost) > 1e-9 {
 		t.Errorf("CostUSD = %v, want %v", st.CostUSD, wantCost)
+	}
+}
+
+func TestCostTodayUSDOnlyTodayCounted(t *testing.T) {
+	fixed := time.Date(2026, 3, 10, 15, 0, 0, 0, time.Local)
+	prev := timeNow
+	timeNow = func() time.Time { return fixed }
+	t.Cleanup(func() { timeNow = prev })
+
+	yday := fixed.AddDate(0, 0, -1).UTC().Format(time.RFC3339)
+	today := fixed.UTC().Format(time.RFC3339)
+	ln := func(id, ts string) string {
+		return `{"type":"assistant","message":{"id":"` + id + `","model":"claude-opus-4","usage":{"input_tokens":100,"output_tokens":200}},"timestamp":"` + ts + `"}` + "\n"
+	}
+	// Yesterday's message plus today's message repeated 3x with one
+	// message.id: both CostUSD and CostTodayUSD deduped per message.id.
+	st := tailAll(t, ln("m1", yday)+ln("m2", today)+ln("m2", today)+ln("m2", today))
+	msgCost := 100*15.0/1e6 + 200*75.0/1e6
+	if math.Abs(st.CostUSD-2*msgCost) > 1e-9 {
+		t.Errorf("CostUSD = %v, want %v (deduped)", st.CostUSD, 2*msgCost)
+	}
+	if math.Abs(st.CostTodayUSD-msgCost) > 1e-9 {
+		t.Errorf("CostTodayUSD = %v, want %v (today only, deduped)", st.CostTodayUSD, msgCost)
+	}
+	if st.CostTodayUSD >= st.CostUSD {
+		t.Errorf("CostTodayUSD = %v not < CostUSD = %v", st.CostTodayUSD, st.CostUSD)
 	}
 }
 

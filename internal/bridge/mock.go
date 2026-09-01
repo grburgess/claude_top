@@ -39,3 +39,8 @@ func (m *MockITerm) NewTabAt(cwd, prefill string) error {
 	m.record("NewTabAt(%s,%q)", cwd, prefill)
 	return m.Err
 }
+
+func (m *MockITerm) ReopenAt(cwd, resumeCmd string) error {
+	m.record("ReopenAt(%s,%q)", cwd, resumeCmd)
+	return m.Err
+}

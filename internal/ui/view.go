@@ -75,6 +75,18 @@ func RenderBlock(s *registry.Session, width int, selected bool, tick int) string
 	return strings.Join(lines, "\n")
 }
 
+// titleOf is the display title of a session: transcript title, then signal
+// project, then session ID.
+func titleOf(s *registry.Session) string {
+	if s.Stats.Title != "" {
+		return s.Stats.Title
+	}
+	if s.Signal.Project != "" {
+		return s.Signal.Project
+	}
+	return s.ID
+}
+
 func gutter(selected bool) string {
 	if selected {
 		return selBar.Render("▍ ")
@@ -104,13 +116,7 @@ func blockLine1(s *registry.Session, cw int, sel bool, tick int, phase blockPhas
 	}
 
 	mode := modeWord(s.Stats.Mode)
-	title := s.Stats.Title
-	if title == "" {
-		title = s.Signal.Project
-	}
-	if title == "" {
-		title = s.ID
-	}
+	title := titleOf(s)
 	tab := ""
 	if s.HasTab {
 		tab = fmt.Sprintf("⌘%d", s.TabIndex)
@@ -512,7 +518,10 @@ func (m Model) View() string {
 		return ""
 	}
 	header := m.headerView()
-	footer := footerStyle.Render(" ↑↓ move · ⏎ jump · h view · q quit")
+	footer := footerStyle.Render(" ↑↓ move · ⏎ jump/reopen · x interrupt · p prompt · h view · q quit")
+	if m.prompting {
+		footer = cardAmber.Render(" prompt → "+m.promptTitle+" ") + m.input.View()
+	}
 
 	avail := m.height - 2
 	if avail < 1 {
@@ -525,6 +534,10 @@ func (m Model) View() string {
 		blocks := make([][]string, len(m.rows))
 		for i, s := range m.rows {
 			blocks[i] = strings.Split(RenderBlock(s, m.width, i == m.cursor, m.tick), "\n")
+			if i == m.cursor && m.interruptArmed(s) {
+				blocks[i] = append(blocks[i], gutter(true)+
+					tinted(stAttention, true).Render("  press x again to interrupt"))
+			}
 		}
 		start := m.scroll
 		if start > m.cursor {
@@ -562,9 +575,10 @@ func (m Model) View() string {
 // headerView is a slim single line: name, counts, sessions, cost, mode, clock.
 func (m Model) headerView() string {
 	var working, idle, attn int
-	var cost float64
+	var costToday, costListed float64
 	for _, s := range m.rows {
-		cost += s.Stats.CostUSD
+		costToday += s.Stats.CostTodayUSD
+		costListed += s.Stats.CostUSD
 		if s.State != registry.StateLive {
 			continue
 		}
@@ -578,12 +592,16 @@ func (m Model) headerView() string {
 		}
 	}
 	sep := headerSep.Render(" · ")
+	cost := cardAmber.Render(fmt.Sprintf("$%.0f today", costToday))
+	if m.mode != registry.ModeLive {
+		cost += sep + headerMeta.Render(fmt.Sprintf("$%.0f listed", costListed))
+	}
 	left := " " + appName.Render("claude_top") + "  " +
 		stWorking.Render(fmt.Sprintf("⚡%d", working)) + " " +
 		stIdle.Render(fmt.Sprintf("💤%d", idle)) + " " +
 		stAttention.Render(fmt.Sprintf("🔴%d", attn)) + sep +
 		headerMeta.Render(fmt.Sprintf("%d sessions", len(m.rows))) + sep +
-		cardAmber.Render(fmt.Sprintf("$%.0f today", cost)) + sep +
+		cost + sep +
 		appName.Render("["+modeLabel(m.mode)+"]")
 	clock := clockStyle.Render(now().Format("15:04:05")) + " "
 	gap := m.width - lipgloss.Width(left) - lipgloss.Width(clock)

@@ -47,6 +47,9 @@ func TestOSAScriptsGenerated(t *testing.T) {
 	if err := o.NewTabAt("/tmp/x", "claude --resume"); err != nil {
 		t.Fatal(err)
 	}
+	if err := o.ReopenAt("/tmp/y", "claude -r abc123"); err != nil {
+		t.Fatal(err)
+	}
 	if !strings.Contains(scripts[0], `write s text "echo \"x\"" newline NO`) {
 		t.Errorf("unsubmitted script wrong:\n%s", scripts[0])
 	}
@@ -66,6 +69,11 @@ func TestOSAScriptsGenerated(t *testing.T) {
 		!strings.Contains(scripts[4], `write text "claude --resume" newline NO`) {
 		t.Errorf("new tab script wrong:\n%s", scripts[4])
 	}
+	if !strings.Contains(scripts[5], "create tab with default profile") ||
+		!strings.Contains(scripts[5], `write text "cd /tmp/y"`) ||
+		!strings.Contains(scripts[5], `write text "claude -r abc123" newline NO`) {
+		t.Errorf("reopen script wrong:\n%s", scripts[5])
+	}
 	// Enumerate must never use `index of t`.
 	if strings.Contains(enumerateScript, "index of t") {
 		t.Error("enumerate script must use a manual tab counter, not `index of t`")
@@ -82,12 +90,14 @@ func TestMockITermRecords(t *testing.T) {
 	_ = m.SendText("/dev/ttys009", "hi", false)
 	_ = m.Interrupt("/dev/ttys009")
 	_ = m.NewTabAt("/tmp", "claude")
+	_ = m.ReopenAt("/tmp", "claude -r x")
 	want := []string{
 		"Enumerate()",
 		"FocusTTY(/dev/ttys009)",
 		`SendText(/dev/ttys009,"hi",false)`,
 		"Interrupt(/dev/ttys009)",
 		`NewTabAt(/tmp,"claude")`,
+		`ReopenAt(/tmp,"claude -r x")`,
 	}
 	if !reflect.DeepEqual(m.Calls, want) {
 		t.Errorf("Calls = %v, want %v", m.Calls, want)

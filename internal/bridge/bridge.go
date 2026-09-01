@@ -24,6 +24,7 @@ type ITerm interface {
 	SendText(tty, text string, submit bool) error
 	Interrupt(tty string) error
 	NewTabAt(cwd, prefill string) error
+	ReopenAt(cwd, resumeCmd string) error
 }
 
 // OSAITerm implements ITerm with osascript. The run field is injectable
@@ -158,4 +159,11 @@ func (o *OSAITerm) NewTabAt(cwd, prefill string) error {
 end tell`, escapeOSA(cwd), escapeOSA(prefill))
 	_, err := o.exec(script)
 	return err
+}
+
+// ReopenAt reopens a closed session: a new tab with the default profile in
+// the current window, a submitted `cd cwd`, then resumeCmd left unsubmitted
+// on the prompt line.
+func (o *OSAITerm) ReopenAt(cwd, resumeCmd string) error {
+	return o.NewTabAt(cwd, resumeCmd)
 }

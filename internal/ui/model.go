@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/burgessj/claude_top/internal/bridge"
@@ -14,6 +15,10 @@ import (
 
 // enumerateEvery is the tick period between iTerm tab re-enumerations.
 const enumerateEvery = 5
+
+// interruptArmWindow is how long an `x` press stays armed for the second
+// confirming press.
+const interruptArmWindow = 3 * time.Second
 
 type tickMsg time.Time
 
@@ -34,6 +39,16 @@ type Model struct {
 	width  int
 	height int
 	tick   int
+
+	// x-interrupt armed state: session ID and when it was armed.
+	armedID string
+	armedAt time.Time
+
+	// p prompt minibuffer state.
+	prompting   bool
+	promptTTY   string
+	promptTitle string
+	input       textinput.Model
 }
 
 // New builds the list-view model; signals may be nil (no watcher).
@@ -104,6 +119,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refresh()
 		return m, waitSignal(m.signals)
 	case tea.KeyMsg:
+		if m.prompting {
+			return m.updatePrompt(msg)
+		}
 		switch {
 		case key.Matches(msg, keys.Quit):
 			return m, tea.Quit
@@ -122,16 +140,70 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refresh()
 		case key.Matches(msg, keys.Refresh):
 			m.refresh()
-		case key.Matches(msg, keys.Focus):
+		case key.Matches(msg, keys.Interrupt):
 			if s := m.selected(); s != nil && s.State == registry.StateLive &&
 				s.HasSignal && s.Signal.TTY != "" {
-				tty := s.Signal.TTY
+				if m.armedID == s.ID && now().Sub(m.armedAt) <= interruptArmWindow {
+					m.armedID = ""
+					tty := s.Signal.TTY
+					term := m.term
+					return m, func() tea.Msg { _ = term.Interrupt(tty); return nil }
+				}
+				m.armedID, m.armedAt = s.ID, now()
+			}
+		case key.Matches(msg, keys.Prompt):
+			if s := m.selected(); s != nil && s.State == registry.StateLive &&
+				s.HasSignal && s.Signal.TTY != "" {
+				m.prompting = true
+				m.promptTTY = s.Signal.TTY
+				m.promptTitle = titleOf(s)
+				m.input = textinput.New()
+				m.input.Focus()
+			}
+		case key.Matches(msg, keys.Focus):
+			if s := m.selected(); s != nil {
 				term := m.term
-				return m, func() tea.Msg { _ = term.FocusTTY(tty); return nil }
+				if s.State == registry.StateLive {
+					if s.HasSignal && s.Signal.TTY != "" {
+						tty := s.Signal.TTY
+						return m, func() tea.Msg { _ = term.FocusTTY(tty); return nil }
+					}
+					break
+				}
+				cwd, id := s.Signal.Cwd, s.ID
+				return m, func() tea.Msg { _ = term.ReopenAt(cwd, "claude -r "+id); return nil }
 			}
 		}
 	}
 	return m, nil
+}
+
+// updatePrompt handles keys while the prompt minibuffer is open: enter sends
+// the text to the session, esc cancels, everything else edits the input.
+func (m Model) updatePrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEsc:
+		m.prompting = false
+		return m, nil
+	case tea.KeyEnter:
+		m.prompting = false
+		text := m.input.Value()
+		if text == "" {
+			return m, nil
+		}
+		tty := m.promptTTY
+		term := m.term
+		return m, func() tea.Msg { _ = term.SendText(tty, text, true); return nil }
+	}
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	return m, cmd
+}
+
+// interruptArmed reports whether the armed x-interrupt applies to s and has
+// not expired.
+func (m Model) interruptArmed(s *registry.Session) bool {
+	return s != nil && m.armedID == s.ID && now().Sub(m.armedAt) <= interruptArmWindow
 }
 
 func nextMode(mode registry.Mode) registry.Mode {

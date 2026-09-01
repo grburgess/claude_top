@@ -3,19 +3,23 @@ package ui
 import "github.com/charmbracelet/bubbles/key"
 
 type keyMap struct {
-	Up      key.Binding
-	Down    key.Binding
-	Quit    key.Binding
-	Mode    key.Binding
-	Refresh key.Binding
-	Focus   key.Binding
+	Up        key.Binding
+	Down      key.Binding
+	Quit      key.Binding
+	Mode      key.Binding
+	Refresh   key.Binding
+	Focus     key.Binding
+	Interrupt key.Binding
+	Prompt    key.Binding
 }
 
 var keys = keyMap{
-	Up:      key.NewBinding(key.WithKeys("up", "k")),
-	Down:    key.NewBinding(key.WithKeys("down", "j")),
-	Quit:    key.NewBinding(key.WithKeys("q", "ctrl+c")),
-	Mode:    key.NewBinding(key.WithKeys("h")),
-	Refresh: key.NewBinding(key.WithKeys("r")),
-	Focus:   key.NewBinding(key.WithKeys("enter")),
+	Up:        key.NewBinding(key.WithKeys("up", "k")),
+	Down:      key.NewBinding(key.WithKeys("down", "j")),
+	Quit:      key.NewBinding(key.WithKeys("q", "ctrl+c")),
+	Mode:      key.NewBinding(key.WithKeys("h")),
+	Refresh:   key.NewBinding(key.WithKeys("r")),
+	Focus:     key.NewBinding(key.WithKeys("enter")),
+	Interrupt: key.NewBinding(key.WithKeys("x")),
+	Prompt:    key.NewBinding(key.WithKeys("p")),
 }

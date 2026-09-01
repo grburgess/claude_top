@@ -13,6 +13,9 @@ import (
 
 const tokensPerTurnCap = 100
 
+// timeNow is injectable for tests (CostTodayUSD "today" boundary).
+var timeNow = time.Now
+
 // Stats is the accumulated view of one session transcript.
 type Stats struct {
 	Model          string
@@ -29,6 +32,7 @@ type Stats struct {
 	TotalOut       int64
 	ThinkingTokens int64
 	CostUSD        float64
+	CostTodayUSD   float64 // cost of messages whose timestamp is today (local)
 	Turns          int
 
 	Skills     []string
@@ -121,7 +125,9 @@ func (r *Reader) reduceLine(data []byte, st *Stats) {
 	if err := json.Unmarshal(data, &ln); err != nil {
 		return
 	}
-	if ts, err := time.Parse(time.RFC3339, ln.Timestamp); err == nil {
+	var ts time.Time
+	if t, err := time.Parse(time.RFC3339, ln.Timestamp); err == nil {
+		ts = t
 		if st.FirstTs.IsZero() {
 			st.FirstTs = ts
 		}
@@ -137,7 +143,7 @@ func (r *Reader) reduceLine(data []byte, st *Stats) {
 	}
 	switch ln.Type {
 	case "assistant":
-		r.reduceAssistant(&ln, st)
+		r.reduceAssistant(&ln, ts, st)
 	case "user":
 		reduceUser(&ln, st)
 	case "ai-title":
@@ -151,7 +157,7 @@ func (r *Reader) reduceLine(data []byte, st *Stats) {
 	}
 }
 
-func (r *Reader) reduceAssistant(ln *line, st *Stats) {
+func (r *Reader) reduceAssistant(ln *line, ts time.Time, st *Stats) {
 	if ln.GitBranch != "" {
 		st.GitBranch = ln.GitBranch
 	}
@@ -197,10 +203,14 @@ func (r *Reader) reduceAssistant(ln *line, st *Stats) {
 				st.ThinkingTokens += clampTokens(u.OutputTokensDetails.ThinkingTokens)
 			}
 			if p, ok := priceFor(st.Model); ok {
-				st.CostUSD += float64(in)*p.in/1e6 +
+				cost := float64(in)*p.in/1e6 +
 					float64(out)*p.out/1e6 +
 					float64(cacheWrite)*p.cacheWrite/1e6 +
 					float64(cacheRead)*p.cacheRead/1e6
+				st.CostUSD += cost
+				if !ts.IsZero() && sameLocalDay(ts, timeNow()) {
+					st.CostTodayUSD += cost
+				}
 			}
 			st.TokensPerTurn = append(st.TokensPerTurn, out)
 			if len(st.TokensPerTurn) > tokensPerTurnCap {
@@ -266,6 +276,13 @@ func clampTokens(v int64) int64 {
 		return 0
 	}
 	return v
+}
+
+// sameLocalDay reports whether a and b fall on the same local calendar day.
+func sameLocalDay(a, b time.Time) bool {
+	ay, am, ad := a.Local().Date()
+	by, bm, bd := b.Local().Date()
+	return ay == by && am == bm && ad == bd
 }
 
 func addUnique(list []string, v string) []string {
