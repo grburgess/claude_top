@@ -124,7 +124,12 @@ func blockLine1(s *registry.Session, cw int, sel bool, tick int, phase blockPhas
 	title := titleOf(s)
 	tab := ""
 	if s.HasTab {
-		tab = fmt.Sprintf("⌘%d", s.TabIndex)
+		switch s.TabBackend {
+		case "tmux":
+			tab = fmt.Sprintf("⊞%d", s.TabIndex) // tmux window index, not an iTerm ⌘ shortcut
+		default:
+			tab = fmt.Sprintf("⌘%d", s.TabIndex)
+		}
 	}
 
 	// dot(1) sp mode sp glyph(1) sp title [sp tab]

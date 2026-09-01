@@ -124,7 +124,7 @@ func enumerateTabs(term bridge.Backend) tea.Cmd {
 		tabs := make(map[string]registry.TermTab, len(ss))
 		backends := make(map[string]string, len(ss))
 		for _, s := range ss {
-			tabs[s.TTY] = registry.TermTab{WindowID: s.WindowID, TabIndex: s.TabIndex}
+			tabs[s.TTY] = registry.TermTab{WindowID: s.WindowID, TabIndex: s.TabIndex, Backend: s.BackendName}
 			backends[s.TTY] = s.BackendName
 		}
 		return termTabsMsg{tabs: tabs, backends: backends}

@@ -314,3 +314,16 @@ func TestHumanDur(t *testing.T) {
 		}
 	}
 }
+
+func TestTabLabelPerBackend(t *testing.T) {
+	s := sampleSession()
+	s.HasTab, s.TabIndex = true, 3
+	s.TabBackend = "tmux"
+	if b := RenderBlock(s, 100, false, 0, ""); !strings.Contains(b, "⊞3") {
+		t.Errorf("tmux tab should render ⊞3: %q", b)
+	}
+	s.TabBackend = "iterm"
+	if b := RenderBlock(s, 100, false, 0, ""); !strings.Contains(b, "⌘3") {
+		t.Errorf("iterm tab should render ⌘3: %q", b)
+	}
+}

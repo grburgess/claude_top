@@ -56,6 +56,7 @@ const (
 type TermTab struct {
 	WindowID string
 	TabIndex int
+	Backend  string // "iterm", "tmux", ... — which backend owns the tty
 }
 
 // Session is the merged view of one Claude Code session.
@@ -70,7 +71,8 @@ type Session struct {
 	TotalAgents     int
 	AgentNames      []string
 	State           State
-	TabIndex        int // ⌘N shortcut; valid when HasTab
+	TabIndex        int    // tab/window shortcut; valid when HasTab
+	TabBackend      string // backend owning the tab ("iterm", "tmux")
 	HasTab          bool
 
 	// StatsReady reports that Stats/agent counts reflect the transcript
@@ -324,6 +326,7 @@ func (r *Registry) List(mode Mode) []*Session {
 		}
 		tab, ok := r.termTabs[s.Signal.TTY]
 		s.TabIndex, s.HasTab = tab.TabIndex, ok && s.Signal.TTY != ""
+		s.TabBackend = tab.Backend
 		c := *s
 		out = append(out, &c)
 	}
