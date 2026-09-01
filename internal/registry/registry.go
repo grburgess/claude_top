@@ -50,6 +50,12 @@ const (
 	subagentLiveWindow   = 120 * time.Second
 )
 
+// TermTab locates a terminal tab holding a session's tty.
+type TermTab struct {
+	WindowID string
+	TabIndex int
+}
+
 // Session is the merged view of one Claude Code session.
 type Session struct {
 	ID              string
@@ -62,6 +68,8 @@ type Session struct {
 	TotalAgents     int
 	AgentNames      []string
 	State           State
+	TabIndex        int // ⌘N shortcut; valid when HasTab
+	HasTab          bool
 }
 
 // Registry scans the signal and projects directories on Refresh.
@@ -72,6 +80,12 @@ type Registry struct {
 
 	readers  map[string]*transcript.Reader
 	sessions map[string]*Session
+	termTabs map[string]TermTab // by tty
+}
+
+// SetTermTabs replaces the tty→tab map used to attach ⌘N shortcuts.
+func (r *Registry) SetTermTabs(tabs map[string]TermTab) {
+	r.termTabs = tabs
 }
 
 // New builds a Registry. Empty dirs fall back to the standard locations.
@@ -217,6 +231,8 @@ func (r *Registry) List(mode Mode) []*Session {
 				continue
 			}
 		}
+		tab, ok := r.termTabs[s.Signal.TTY]
+		s.TabIndex, s.HasTab = tab.TabIndex, ok && s.Signal.TTY != ""
 		out = append(out, s)
 	}
 	sort.Slice(out, func(i, j int) bool {

@@ -12,9 +12,14 @@ import (
 	"github.com/burgessj/claude_top/internal/signalfile"
 )
 
+// enumerateEvery is the tick period between iTerm tab re-enumerations.
+const enumerateEvery = 5
+
 type tickMsg time.Time
 
 type sigMsg signalfile.Signal
+
+type termTabsMsg map[string]registry.TermTab
 
 // Model is the Elm-style model for the list view.
 type Model struct {
@@ -28,7 +33,7 @@ type Model struct {
 	scroll int
 	width  int
 	height int
-	flash  bool
+	tick   int
 }
 
 // New builds the list-view model; signals may be nil (no watcher).
@@ -39,7 +44,7 @@ func New(reg *registry.Registry, term bridge.ITerm, signals <-chan signalfile.Si
 }
 
 func (m Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{tick()}
+	cmds := []tea.Cmd{tick(), enumerateTabs(m.term)}
 	if m.signals != nil {
 		cmds = append(cmds, waitSignal(m.signals))
 	}
@@ -60,15 +65,41 @@ func waitSignal(ch <-chan signalfile.Signal) tea.Cmd {
 	}
 }
 
+// enumerateTabs runs bridge.Enumerate off the Update loop (it execs
+// osascript) and delivers the tty→tab map as a message.
+func enumerateTabs(term bridge.ITerm) tea.Cmd {
+	if term == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		ss, err := term.Enumerate()
+		if err != nil {
+			return nil
+		}
+		tabs := make(map[string]registry.TermTab, len(ss))
+		for _, s := range ss {
+			tabs[s.TTY] = registry.TermTab{WindowID: s.WindowID, TabIndex: s.TabIndex}
+		}
+		return termTabsMsg(tabs)
+	}
+}
+
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.clampView()
 	case tickMsg:
-		m.flash = !m.flash
+		m.tick++
 		m.refresh()
-		return m, tick()
+		cmds := []tea.Cmd{tick()}
+		if m.tick%enumerateEvery == 0 {
+			cmds = append(cmds, enumerateTabs(m.term))
+		}
+		return m, tea.Batch(cmds...)
+	case termTabsMsg:
+		m.reg.SetTermTabs(msg)
+		m.refresh()
 	case sigMsg:
 		m.refresh()
 		return m, waitSignal(m.signals)
@@ -120,7 +151,8 @@ func (m *Model) refresh() {
 	m.clampView()
 }
 
-// clampView keeps the cursor in range and the scroll window over it.
+// clampView keeps the cursor in range; View slides the block window itself
+// (block heights vary), so scroll only needs to stay at or above the cursor.
 func (m *Model) clampView() {
 	if m.cursor >= len(m.rows) {
 		m.cursor = len(m.rows) - 1
@@ -128,25 +160,12 @@ func (m *Model) clampView() {
 	if m.cursor < 0 {
 		m.cursor = 0
 	}
-	h := m.rowsHeight()
-	if m.cursor < m.scroll {
+	if m.scroll > m.cursor {
 		m.scroll = m.cursor
-	}
-	if m.cursor >= m.scroll+h {
-		m.scroll = m.cursor - h + 1
 	}
 	if m.scroll < 0 {
 		m.scroll = 0
 	}
-}
-
-// rowsHeight is the visible row count: header box (3) + footer (1).
-func (m Model) rowsHeight() int {
-	h := m.height - 4
-	if h < 1 {
-		h = 1
-	}
-	return h
 }
 
 func (m Model) selected() *registry.Session {

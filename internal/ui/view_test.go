@@ -1,16 +1,25 @@
 package ui
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	"github.com/burgessj/claude_top/internal/registry"
 	"github.com/burgessj/claude_top/internal/signalfile"
 	"github.com/burgessj/claude_top/internal/transcript"
 )
+
+// TestMain pins a color profile: tests run without a TTY, where lipgloss
+// would otherwise strip all styling (making pulse/tint assertions no-ops).
+func TestMain(m *testing.M) {
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	os.Exit(m.Run())
+}
 
 func fixNow(t *testing.T) {
 	t.Helper()
@@ -27,78 +36,167 @@ func sampleSession() *registry.Session {
 		Signal: signalfile.Signal{
 			Type:    "running",
 			Project: "claude_top",
+			Cwd:     "/Users/x/claude_top",
 			TTY:     "/dev/ttys001",
 		},
 		Stats: transcript.Stats{
-			Title:         "Fix the reducer bugs",
-			GitBranch:     "main",
-			Model:         "claude-opus-5",
-			Effort:        "high",
-			ContextTokens: 100_000,
-			ContextLimit:  200_000,
-			CostUSD:       12.34,
-			LastToolCall:  "ZBashZ",
-			LastTs:        time.Date(2026, 1, 1, 11, 57, 0, 0, time.UTC),
+			Title:             "Fix the reducer bugs",
+			GitBranch:         "main",
+			Model:             "claude-opus-5",
+			Effort:            "high",
+			Mode:              "chat",
+			PermissionMode:    "default",
+			ContextTokens:     285_000,
+			ContextLimit:      1_000_000,
+			CostUSD:           64.19,
+			Turns:             42,
+			Skills:            []string{"pull-request", "code-review"},
+			MCPServers:        []string{"github"},
+			TokensPerTurn:     []int64{10, 200, 50, 800, 400},
+			LastAssistantText: "Done. Both projects are in the graph and the rewire landed — 2 nodes moved and every edge survived the migration intact.",
+			FirstTs:           time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC),
+			LastTs:            time.Date(2026, 1, 1, 11, 57, 0, 0, time.UTC),
 		},
-		LiveAgents: 2,
-		State:      registry.StateLive,
+		LiveAgents:  2,
+		TotalAgents: 5,
+		AgentNames:  []string{"scout", "fixer"},
+		State:       registry.StateLive,
+		TabIndex:    6,
+		HasTab:      true,
 	}
 }
 
-func TestRenderRowWide(t *testing.T) {
+func idleSession() *registry.Session {
+	s := sampleSession()
+	s.Signal.Type = "idle"
+	return s
+}
+
+func blockLinesOf(t *testing.T, s *registry.Session, width int, selected bool, tick int) []string {
+	t.Helper()
+	block := RenderBlock(s, width, selected, tick)
+	lines := strings.Split(block, "\n")
+	for _, ln := range lines {
+		if w := lipgloss.Width(ln); w > width {
+			t.Errorf("line %d cols, want <= %d: %q", w, width, ln)
+		}
+	}
+	return lines
+}
+
+func TestRenderBlockWorkingUnselected(t *testing.T) {
 	fixNow(t)
-	row := RenderRow(sampleSession(), 120)
-	if strings.Contains(row, "\n") {
-		t.Fatal("row contains newline")
+	lines := blockLinesOf(t, sampleSession(), 100, false, 0)
+	if len(lines) != 2 {
+		t.Fatalf("working block = %d lines, want 2 (no snippet)", len(lines))
 	}
-	if w := lipgloss.Width(row); w > 120 {
-		t.Errorf("row width = %d, want <= 120", w)
+	l1, l2 := lines[0], lines[1]
+	for _, want := range []string{"●", "Chat", "◐", "Fix the reducer bugs", "⌘6"} {
+		if !strings.Contains(l1, want) {
+			t.Errorf("line1 missing %q: %q", want, l1)
+		}
 	}
-	for _, want := range []string{"ZBashZ", "opus-5 high", "$12.34", "⚑2", "3m", "50%", "█", "claude_top·main", "Fix the reducer"} {
-		if !strings.Contains(row, want) {
-			t.Errorf("row missing %q: %q", want, row)
+	if !strings.Contains(l2, "working") {
+		t.Errorf("line2 missing state word: %q", l2)
+	}
+	if strings.Contains(l1+l2, "Done.") {
+		t.Error("working block must not show the assistant snippet")
+	}
+}
+
+func TestRenderBlockSpinnerRotates(t *testing.T) {
+	fixNow(t)
+	s := sampleSession()
+	for tick, glyph := range spinnerFrames {
+		if b := RenderBlock(s, 100, false, tick); !strings.Contains(b, glyph) {
+			t.Errorf("tick %d: missing spinner frame %q", tick, glyph)
 		}
 	}
 }
 
-func TestRenderRowNarrowDropsToolThenModelThenPct(t *testing.T) {
+func TestRenderBlockIdleShowsSnippet(t *testing.T) {
 	fixNow(t)
-	s := sampleSession()
-
-	row := RenderRow(s, 95) // < 100: tool dropped, model kept
-	if strings.Contains(row, "ZBashZ") {
-		t.Errorf("width 95: tool call should be dropped: %q", row)
+	lines := blockLinesOf(t, idleSession(), 100, false, 0)
+	if len(lines) < 3 || len(lines) > 4 {
+		t.Fatalf("idle block = %d lines, want 3-4", len(lines))
 	}
-	if !strings.Contains(row, "opus-5") {
-		t.Errorf("width 95: model should be kept: %q", row)
+	body := strings.Join(lines, "\n")
+	if !strings.Contains(body, "idle") {
+		t.Errorf("missing state word: %q", body)
 	}
-
-	row = RenderRow(s, 80) // < 85: model dropped, gauge %% kept
-	if strings.Contains(row, "opus-5") {
-		t.Errorf("width 80: model should be dropped: %q", row)
+	if !strings.Contains(body, "Done. Both projects") {
+		t.Errorf("missing assistant snippet: %q", body)
 	}
-	if !strings.Contains(row, "50%") {
-		t.Errorf("width 80: gauge %% should be kept: %q", row)
-	}
-
-	row = RenderRow(s, 65) // < 70: gauge %% dropped, bar kept
-	if strings.Contains(row, "%") {
-		t.Errorf("width 65: gauge %% should be dropped: %q", row)
-	}
-	if !strings.Contains(row, "█") {
-		t.Errorf("width 65: gauge bar should be kept: %q", row)
+	if !strings.Contains(body, "✳") {
+		t.Errorf("missing idle glyph: %q", body)
 	}
 }
 
-func TestRenderRowNeverWraps(t *testing.T) {
+func TestRenderBlockUnselectedAtMostFourLines(t *testing.T) {
+	fixNow(t)
+	for _, s := range []*registry.Session{
+		sampleSession(),
+		idleSession(),
+		func() *registry.Session { s := sampleSession(); s.Signal.Type = "attention"; return s }(),
+		{ID: "empty"},
+	} {
+		if n := len(blockLinesOf(t, s, 100, false, 0)); n > 4 {
+			t.Errorf("session %s: unselected block = %d lines, want <= 4", s.ID, n)
+		}
+	}
+}
+
+func TestRenderBlockSelectedDetailWide(t *testing.T) {
+	fixNow(t)
+	lines := blockLinesOf(t, idleSession(), 100, true, 0)
+	body := strings.Join(lines, "\n")
+	for _, want := range []string{
+		"▍",       // accent bar
+		"285k/1M", // context text
+		"(28%)",   // context percent
+		"█",       // gauge cells
+		"$64.19",  // cost
+		"opus-5 high",
+		"claude_top · main",
+		"default",                   // permission mode
+		"pull-request, code-review", // skills
+		"github",                    // mcp
+		"⚑2 live / 5 total",         // subagents
+		"scout, fixer",
+		"42 turns",
+		"1h", // duration
+		"╭",  // card border
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("selected block missing %q:\n%s", want, body)
+		}
+	}
+	// sparkline present with a max-height cell for the 800 turn
+	if !strings.Contains(body, "█▄") && !strings.Contains(body, "▁") {
+		t.Errorf("selected block missing sparkline:\n%s", body)
+	}
+}
+
+func TestRenderBlockSelectedNarrowStacks(t *testing.T) {
+	fixNow(t)
+	wideN := len(blockLinesOf(t, idleSession(), 120, true, 0))
+	narrowN := len(blockLinesOf(t, idleSession(), 80, true, 0))
+	if narrowN <= wideN {
+		t.Errorf("narrow selected block should stack columns: wide=%d narrow=%d lines", wideN, narrowN)
+	}
+}
+
+func TestRenderBlockNeverWraps(t *testing.T) {
 	fixNow(t)
 	sessions := []*registry.Session{
 		sampleSession(),
+		idleSession(),
 		{ID: "empty"}, // zero-value stats, no signal
 		func() *registry.Session {
 			s := sampleSession()
 			s.Signal.Type = "attention"
 			s.Stats.Title = strings.Repeat("very long title ", 20)
+			s.Stats.LastAssistantText = strings.Repeat("word ", 200)
 			return s
 		}(),
 		func() *registry.Session {
@@ -106,16 +204,71 @@ func TestRenderRowNeverWraps(t *testing.T) {
 			s.State = registry.StateDead
 			return s
 		}(),
+		func() *registry.Session {
+			s := sampleSession()
+			s.State = registry.StateRecent
+			return s
+		}(),
 	}
 	for _, s := range sessions {
-		for _, w := range []int{40, 60, 65, 69, 70, 80, 84, 85, 99, 100, 120, 200} {
-			row := RenderRow(s, w)
-			if strings.Contains(row, "\n") {
-				t.Fatalf("width %d: row wraps", w)
+		for _, w := range []int{20, 40, 60, 80, 89, 90, 100, 120, 200} {
+			for _, sel := range []bool{false, true} {
+				blockLinesOf(t, s, w, sel, 1) // width assertions inside
 			}
-			if got := lipgloss.Width(row); got > w {
-				t.Errorf("session %s width %d: rendered %d cols", s.ID, w, got)
-			}
+		}
+	}
+}
+
+func TestRenderBlockNoTabOmitsShortcut(t *testing.T) {
+	fixNow(t)
+	s := sampleSession()
+	s.HasTab = false
+	if b := RenderBlock(s, 100, false, 0); strings.Contains(b, "⌘") {
+		t.Errorf("block shows ⌘ without a tab: %q", b)
+	}
+}
+
+func TestAttentionDotPulses(t *testing.T) {
+	fixNow(t)
+	s := sampleSession()
+	s.Signal.Type = "attention"
+	if RenderBlock(s, 100, false, 0) == RenderBlock(s, 100, false, 1) {
+		t.Error("attention block identical on odd/even ticks, want pulse")
+	}
+}
+
+func TestWrapWords(t *testing.T) {
+	got := wrapWords("one two three four five six", 10, 2)
+	if len(got) != 2 {
+		t.Fatalf("lines = %v", got)
+	}
+	if got[0] != "one two" {
+		t.Errorf("line1 = %q", got[0])
+	}
+	if !strings.HasSuffix(got[1], "…") {
+		t.Errorf("line2 not ellipsized: %q", got[1])
+	}
+}
+
+func TestSparkline(t *testing.T) {
+	if got := sparkline([]int64{0, 400, 800}, 40); got != "▁▄█" {
+		t.Errorf("sparkline = %q, want ▁▄█", got)
+	}
+	if got := sparkline(nil, 40); got != "—" {
+		t.Errorf("sparkline(nil) = %q", got)
+	}
+}
+
+func TestHumanTokens(t *testing.T) {
+	cases := map[int64]string{
+		999:       "999",
+		285_000:   "285k",
+		1_000_000: "1M",
+		1_500_000: "1.5M",
+	}
+	for in, want := range cases {
+		if got := humanTokens(in); got != want {
+			t.Errorf("humanTokens(%d) = %q, want %q", in, got, want)
 		}
 	}
 }

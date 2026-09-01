@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -301,6 +302,27 @@ func TestNegativeTokensClamped(t *testing.T) {
 	wantCost := 100 * 15.0 / 1e6 // only positive input priced
 	if math.Abs(st.CostUSD-wantCost) > 1e-9 {
 		t.Errorf("CostUSD = %v, want %v", st.CostUSD, wantCost)
+	}
+}
+
+func TestLastAssistantText(t *testing.T) {
+	jsonl := `{"type":"assistant","message":{"model":"claude-opus-4","content":[{"type":"text","text":"first\nreply"}]},"timestamp":"2026-01-01T10:00:00Z"}
+{"type":"assistant","message":{"model":"claude-opus-4","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{}}]},"timestamp":"2026-01-01T10:01:00Z"}
+{"type":"assistant","message":{"model":"claude-opus-4","content":[{"type":"text","text":"  "},{"type":"text","text":"Done.  Both\nprojects\tare in the graph."}]},"timestamp":"2026-01-01T10:02:00Z"}
+`
+	st := tailAll(t, jsonl)
+	if st.LastAssistantText != "Done. Both projects are in the graph." {
+		t.Errorf("LastAssistantText = %q", st.LastAssistantText)
+	}
+}
+
+func TestLastAssistantTextCapped300(t *testing.T) {
+	long := strings.Repeat("word ", 100)
+	jsonl := `{"type":"assistant","message":{"content":[{"type":"text","text":"` + long + `"}]},"timestamp":"2026-01-01T10:00:00Z"}
+`
+	st := tailAll(t, jsonl)
+	if n := len([]rune(st.LastAssistantText)); n != 300 {
+		t.Errorf("LastAssistantText len = %d, want 300", n)
 	}
 }
 

@@ -37,6 +37,7 @@ type Stats struct {
 
 	LastToolCall      string
 	LastPromptSnippet string
+	LastAssistantText string  // last non-empty assistant text block, ≤300 chars
 	TokensPerTurn     []int64 // out tokens per assistant turn, ring capped
 
 	FirstTs time.Time
@@ -212,6 +213,10 @@ func (r *Reader) reduceAssistant(ln *line, st *Stats) {
 		return
 	}
 	for _, it := range items {
+		if it.Type == "text" && strings.TrimSpace(it.Text) != "" {
+			st.LastAssistantText = snippet(it.Text, 300)
+			continue
+		}
 		if it.Type != "tool_use" {
 			continue
 		}

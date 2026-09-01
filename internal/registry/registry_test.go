@@ -179,6 +179,28 @@ func TestRefreshMergesStatsAndKeepsOffsets(t *testing.T) {
 	}
 }
 
+func TestSetTermTabsAttachesShortcut(t *testing.T) {
+	f := newFixture(t)
+	f.writeSignal(t, "s9", "running", now.Add(-1*time.Minute))
+	f.r.SetTermTabs(map[string]TermTab{
+		"/dev/ttys001": {WindowID: "w1", TabIndex: 6},
+	})
+	if err := f.r.Refresh(); err != nil {
+		t.Fatal(err)
+	}
+	ss := f.r.List(ModeAll)
+	if len(ss) != 1 {
+		t.Fatalf("sessions = %d, want 1", len(ss))
+	}
+	if !ss[0].HasTab || ss[0].TabIndex != 6 {
+		t.Errorf("HasTab/TabIndex = %v/%d, want true/6", ss[0].HasTab, ss[0].TabIndex)
+	}
+	f.r.SetTermTabs(map[string]TermTab{"/dev/ttys099": {TabIndex: 2}})
+	if ss := f.r.List(ModeAll); ss[0].HasTab {
+		t.Error("HasTab = true for unmatched tty")
+	}
+}
+
 func TestRemovedSessionDropped(t *testing.T) {
 	f := newFixture(t)
 	f.writeTranscript(t, "s8", now.Add(-1*time.Minute))
