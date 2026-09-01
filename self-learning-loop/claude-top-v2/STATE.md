@@ -23,6 +23,7 @@ Loop status: running
 ## Open failures
 
 ## Iteration log
+- 1.1 · class:liveness-classification+async-startup · tier:ceiling(fable) · maker: signal-less live (2min window, amber 'live' phase), RefreshIndex/EnsureStats split w/ mutex + 4-worker enrichment, 1000-file index 11.9ms (63 tests, -race clean) · verdict: C1 PASS (orchestrator sandboxed live-check: signal-less session renders in default [live]), C2 PASS-offline (11.9ms << 1s; input-responsiveness probe pending)
 
 ## Consult
 - ../../.claude/PROJECT-LEARNINGS.md
@@ -31,7 +32,7 @@ Loop status: running
 
 ## Auto mode
 - status: on
-- budget spent: 0 / 20
+- budget spent: 1 / 20
 - session-in-progress: yes
 - last wakeup: none
 - halt reason: none
