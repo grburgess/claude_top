@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"os/exec"
 	"reflect"
 	"strings"
 	"testing"
@@ -77,6 +78,43 @@ func TestOSAScriptsGenerated(t *testing.T) {
 	// Enumerate must never use `index of t`.
 	if strings.Contains(enumerateScript, "index of t") {
 		t.Error("enumerate script must use a manual tab counter, not `index of t`")
+	}
+}
+
+// TestEnumerateDelimiterBoundOutsideTell guards the regression where the
+// script joined fields with `tab` INSIDE the tell block: there `tab`
+// resolves to iTerm2's tab class and coerces to the literal string "tab",
+// so parseEnumerate saw one field per line and every tty became
+// unroutable (fallback → "terminal not recognized" on focus).
+func TestEnumerateDelimiterBoundOutsideTell(t *testing.T) {
+	tellAt := strings.Index(enumerateScript, `tell application "iTerm2"`)
+	if tellAt < 0 {
+		t.Fatal("enumerate script has no iTerm2 tell block")
+	}
+	if !strings.Contains(enumerateScript[:tellAt], "set d to tab") {
+		t.Error("delimiter must be bound to tab before the tell block")
+	}
+	if strings.Contains(enumerateScript[tellAt:], "& tab &") {
+		t.Error("enumerate script must not use bare `tab` inside the tell block")
+	}
+}
+
+// TestEnumerateScriptEmitsTabs runs the real delimiter binding through
+// osascript: the unit tests above feed parseEnumerate synthetic "\t" data,
+// so only this exercises what AppleScript actually produces.
+func TestEnumerateScriptEmitsTabs(t *testing.T) {
+	if _, err := exec.LookPath("osascript"); err != nil {
+		t.Skip("osascript not available")
+	}
+	out, err := exec.Command("osascript", "-e", `set d to tab
+tell application "Finder"
+	return "A" & d & "B"
+end tell`).Output()
+	if err != nil {
+		t.Skipf("osascript failed: %v", err)
+	}
+	if got := strings.TrimSpace(string(out)); got != "A\tB" {
+		t.Errorf("delimiter = %q, want %q", got, "A\tB")
 	}
 }
 

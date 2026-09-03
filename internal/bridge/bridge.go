@@ -59,14 +59,19 @@ func escapeOSA(s string) string {
 	return s
 }
 
-const enumerateScript = `set out to ""
+// enumerateScript binds the field delimiter d OUTSIDE the tell block:
+// inside `tell application "iTerm2"` the identifier `tab` resolves to
+// iTerm2's tab CLASS and coerces to the literal string "tab", not a tab
+// character, so parseEnumerate would never see 5 fields.
+const enumerateScript = `set d to tab
+set out to ""
 tell application "iTerm2"
 	repeat with w in windows
 		set tabIdx to 0
 		repeat with t in tabs of w
 			set tabIdx to tabIdx + 1
 			repeat with s in sessions of t
-				set out to out & (id of w) & tab & tabIdx & tab & (id of s) & tab & (tty of s) & tab & (name of s) & linefeed
+				set out to out & (id of w) & d & tabIdx & d & (id of s) & d & (tty of s) & d & (name of s) & linefeed
 			end repeat
 		end repeat
 	end repeat
