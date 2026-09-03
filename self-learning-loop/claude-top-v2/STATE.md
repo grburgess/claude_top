@@ -12,8 +12,18 @@ Loop status: complete 2026-09-01
 <!-- inherit claude-top-build STATE Verified facts (same repo): osascript verbs,
      subagents/ structure, usage dedup per message.id, ctx-limit promotion,
      classifier quarantine + in-band probe pattern, signal/transcript schemas. -->
+- AppleScript `tab` inside `tell application "iTerm2"` resolves to iTerm2's tab
+  CLASS and coerces to the literal string "tab", NOT 0x09; outside a tell block
+  it is a real tab byte. Method: `osascript … | od -c` on both forms, 2026-09-03.
+  Post-v2 field bug: broke Enumerate → empty Router owner-map → every tty hit
+  FallbackBackend → "unsupported: can't focus <tty>". Fixed in da9ad3d by binding
+  `set d to tab` before the tell.
 
 ## General rules
+- A verb tested ONLY through an injectable fake exercises the parser, never the
+  emitter: the real iTerm enumerate script was never run by any test, so a
+  delimiter that produced zero fields shipped green. Any generated-script /
+  generated-query surface needs one round-trip test against the real interpreter.
 - Maker context diet; probes need ≥1 UI-tick settle + capture-confirm selection
   before action keys (gl-2026-09-01-tui-probe-tick-race).
 - Go at /opt/homebrew/bin/go; MITM proxy → GOPROXY file mirror + GOSUMDB=off.

@@ -19,6 +19,11 @@ docs/research/2026-09-01-claude-top.md; graph node research-plan-claude-top.
 | claude-top-v2 | 1 | 5/5 | complete | 2026-09-01 | — |
 
 ## 3 Cross-loop verified facts
+- AppleScript `tab` inside `tell application "iTerm2"` is iTerm2's tab CLASS and
+  coerces to the literal string "tab"; only outside a tell block is it 0x09. Bind
+  the delimiter before the tell (`set d to tab`) or use `(ASCII character 9)` ·
+  verified via osascript | od -c on both forms · 2026-09-03 · source:post-v2 field
+  bug (da9ad3d) · used:1 last:2026-09-03
 - iTerm2 bridge verbs all work via bare osascript (enumerate/select-by-tty/write
   newline NO/^C via string id 3/contents/create+close tab); never `index of t` in
   repeat-with · verified via live execution · 2026-09-01 · source:claude-top-build ·
@@ -29,6 +34,15 @@ docs/research/2026-09-01-claude-top.md; graph node research-plan-claude-top.
   used:1 last:2026-09-01
 
 ## 4 Cross-loop rules
+- A generated-script surface tested only through an injectable fake exercises the
+  parser, never the emitter: claude_top's iTerm enumerate script was never run by
+  any test, so a delimiter yielding zero fields shipped green through two loops.
+  One round-trip test against the real interpreter per generated-script surface ·
+  2026-09-03 · source:post-v2 field bug · used:1 last:2026-09-03
+- A latent bug surfaces when a refactor makes a dead path load-bearing: v1 called
+  FocusTTY directly (self-scanning), v2's Router made Enumerate a dependency of
+  every action. Re-verify live the paths a refactor newly depends on, not only the
+  ones it edits · 2026-09-03 · source:post-v2 field bug · used:1 last:2026-09-03
 - Data flagged by a subagent security warning is session-quarantined for agents:
   hand ONE movement command to the user's shell, gitignore the data after ·
   2026-09-01 · source:claude-top-build · used:1 last:2026-09-01
@@ -71,6 +85,10 @@ docs/research/2026-09-01-claude-top.md; graph node research-plan-claude-top.
   (Bubble Tea) is duplicated effort — candidate consolidation study.
 
 ## 9 Run log
+- 2026-09-03 · post-loop field-bug fix (not a distill run) · systematic-debugging on
+  "unsupported: can't focus <tty>" · root cause AppleScript tab-class shadowing ·
+  1 verified fact + 2 rules added, both loops untouched (complete) · fix da9ad3d
+  pushed origin+cape
 - 2026-09-01 · loop-distill lite on claude-top-v2 completion · loops:2 (both complete) · no new promotions (learnings project-scoped, already in loop STATE) · CLAUDE.md block: unchanged, still qualifies · flags:0 new; cosmetic ⌘N/tmux label → §8
 - 2026-09-01 · loops:1 (complete) · flags:1 stale (proposal) · promotions:1 pending
   verify, 2 withheld UNPROVABLE · CLAUDE.md block: proposed (gated, human present) ·
