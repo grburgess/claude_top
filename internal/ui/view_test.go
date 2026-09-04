@@ -63,6 +63,7 @@ func sampleSession() *registry.Session {
 		AgentNames:  []string{"scout", "fixer"},
 		State:       registry.StateLive,
 		Open:        true,
+		TTY:         "/dev/ttys001",
 		TabIndex:    6,
 		HasTab:      true,
 	}

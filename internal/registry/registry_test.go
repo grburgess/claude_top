@@ -222,6 +222,90 @@ func TestStateTransitionOnCloseThenClock(t *testing.T) {
 	}
 }
 
+// writeTitledTranscript writes a transcript carrying an aiTitle, so the
+// session has the title its terminal tab is matched against.
+func (f *fixture) writeTitledTranscript(t *testing.T, id, title string, mtime time.Time) {
+	t.Helper()
+	p := filepath.Join(f.slugDir, id+".jsonl")
+	content := `{"type":"assistant","message":{"model":"claude-opus-4","usage":{"input_tokens":1,"output_tokens":2}},"timestamp":"2026-01-01T11:00:00Z"}` + "\n" +
+		fmt.Sprintf(`{"type":"ai-title","aiTitle":%q,"timestamp":"2026-01-01T11:00:00Z"}`, title) + "\n"
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(p, mtime, mtime); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestOpenByTabTitle is the case the pid probe cannot see: no signal file at
+// all (the plugin's signal files are short-lived), but a terminal tab still
+// carries the session's title, which proves the terminal is open and names
+// the tty to jump to.
+func TestOpenByTabTitle(t *testing.T) {
+	f := newFixture(t)
+	f.writeTitledTranscript(t, "tt1", "Complaints in Scope MDD draft", now.Add(-2*time.Hour))
+	f.r.SetTermTabs(map[string]TermTab{
+		"/dev/ttys027": {TabIndex: 8, Backend: "iterm",
+			Title: "◑ Complaints in Scope MDD draft (toolbox) (toolbox)"},
+	})
+	s := f.sessionOf(t, "tt1")
+	if !s.Open {
+		t.Error("Open = false although a tab carries the session title")
+	}
+	if s.TTY != "/dev/ttys027" {
+		t.Errorf("TTY = %q, want /dev/ttys027", s.TTY)
+	}
+	if s.State != StateLive {
+		t.Errorf("state = %v, want live", s.State)
+	}
+	if !s.HasTab || s.TabIndex != 8 {
+		t.Errorf("HasTab/TabIndex = %v/%d, want true/8", s.HasTab, s.TabIndex)
+	}
+}
+
+// TestNoOpenWhenTabTitleReverted covers the session ending: the shell takes
+// its tab title back, so nothing matches and the session is closed.
+func TestNoOpenWhenTabTitleReverted(t *testing.T) {
+	f := newFixture(t)
+	f.writeTitledTranscript(t, "tt2", "Complaints in Scope MDD draft", now.Add(-2*time.Hour))
+	f.r.SetTermTabs(map[string]TermTab{
+		"/dev/ttys027": {TabIndex: 8, Title: "burgessj: projects (-zsh)"},
+	})
+	s := f.sessionOf(t, "tt2")
+	if s.Open || s.TTY != "" {
+		t.Errorf("Open/TTY = %v/%q, want false/\"\"", s.Open, s.TTY)
+	}
+	if s.State == StateLive {
+		t.Error("state = live for a session no tab is showing")
+	}
+}
+
+// TestShortTitleDoesNotClaimTab: a stub title must not match half the
+// terminal, so titles under minTitleMatch never claim a tab.
+func TestShortTitleDoesNotClaimTab(t *testing.T) {
+	f := newFixture(t)
+	f.writeTitledTranscript(t, "tt3", "Fix", now.Add(-2*time.Hour))
+	f.r.SetTermTabs(map[string]TermTab{"/dev/ttys009": {Title: "Fix the reducer bugs"}})
+	if s := f.sessionOf(t, "tt3"); s.Open {
+		t.Error("short title claimed a tab")
+	}
+}
+
+// TestSignalTTYWinsOverTitleMatch: the signal names the tty authoritatively,
+// so a title match must not move where actions are sent.
+func TestSignalTTYWinsOverTitleMatch(t *testing.T) {
+	f := newFixture(t)
+	f.openTerminal()
+	f.writeSignal(t, "tt4", "idle", now.Add(-5*time.Minute))
+	f.writeTitledTranscript(t, "tt4", "Complaints in Scope MDD draft", now.Add(-5*time.Minute))
+	f.r.SetTermTabs(map[string]TermTab{
+		"/dev/ttys027": {TabIndex: 8, Title: "◑ Complaints in Scope MDD draft"},
+	})
+	if s := f.sessionOf(t, "tt4"); s.TTY != "/dev/ttys001" {
+		t.Errorf("TTY = %q, want the signal's /dev/ttys001", s.TTY)
+	}
+}
+
 func TestListModesAndOrder(t *testing.T) {
 	f := newFixture(t)
 	f.openTerminal()
