@@ -85,9 +85,7 @@ func TestInterruptArmExpires(t *testing.T) {
 func TestInterruptIgnoredForNonLive(t *testing.T) {
 	at := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	setNow(t, &at)
-	s := sampleSession()
-	s.State = registry.StateDead
-	m, mock := testModel(s)
+	m, mock := testModel(closedSession(registry.StateDead))
 	m, cmd := press(t, m, keyRunes("x"))
 	runCmd(cmd)
 	_, cmd = press(t, m, keyRunes("x"))
@@ -159,9 +157,7 @@ func TestPromptEscCancels(t *testing.T) {
 }
 
 func TestPromptIgnoredForNonLive(t *testing.T) {
-	s := sampleSession()
-	s.State = registry.StateRecent
-	m, _ := testModel(s)
+	m, _ := testModel(closedSession(registry.StateRecent))
 	m, _ = press(t, m, keyRunes("p"))
 	if m.prompting {
 		t.Error("p on non-live session must not open the minibuffer")
@@ -169,9 +165,7 @@ func TestPromptIgnoredForNonLive(t *testing.T) {
 }
 
 func TestDeadSessionEnterReopens(t *testing.T) {
-	s := sampleSession()
-	s.State = registry.StateDead
-	m, mock := testModel(s)
+	m, mock := testModel(closedSession(registry.StateDead))
 	_, cmd := press(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("enter on dead session returned no cmd")
@@ -180,6 +174,23 @@ func TestDeadSessionEnterReopens(t *testing.T) {
 	want := `ReopenAt(/Users/x/claude_top,"claude -r abc123")`
 	if len(mock.Calls) != 1 || mock.Calls[0] != want {
 		t.Errorf("calls = %v, want [%s]", mock.Calls, want)
+	}
+}
+
+// TestSignalLessLiveSessionEnterDoesNothing covers machines with no
+// tab-status plugin: the session is live but carries no pid or tty, so it
+// cannot be jumped to — and reopening it would spawn a second copy of a
+// session that is already running.
+func TestSignalLessLiveSessionEnterDoesNothing(t *testing.T) {
+	s := sampleSession()
+	s.Open, s.HasSignal = false, false
+	s.Signal.TTY, s.Signal.Cwd = "", ""
+	s.State = registry.StateLive
+	m, mock := testModel(s)
+	_, cmd := press(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	runCmd(cmd)
+	if len(mock.Calls) != 0 {
+		t.Errorf("unroutable live session must not act: calls = %v", mock.Calls)
 	}
 }
 

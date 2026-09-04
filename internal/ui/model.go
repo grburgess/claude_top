@@ -202,7 +202,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refresh()
 			return m, m.maybeEnrich()
 		case key.Matches(msg, keys.Interrupt):
-			if s := m.selected(); s != nil && s.State == registry.StateLive &&
+			if s := m.selected(); s != nil && s.Open &&
 				s.HasSignal && s.Signal.TTY != "" {
 				if m.armedID == s.ID && now().Sub(m.armedAt) <= interruptArmWindow {
 					m.armedID = ""
@@ -213,7 +213,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.armedID, m.armedAt = s.ID, now()
 			}
 		case key.Matches(msg, keys.Prompt):
-			if s := m.selected(); s != nil && s.State == registry.StateLive &&
+			if s := m.selected(); s != nil && s.Open &&
 				s.HasSignal && s.Signal.TTY != "" {
 				m.prompting = true
 				m.promptTTY = s.Signal.TTY
@@ -224,11 +224,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, keys.Focus):
 			if s := m.selected(); s != nil {
 				term := m.term
-				if s.State == registry.StateLive {
-					if s.HasSignal && s.Signal.TTY != "" {
+				// Only a closed session gets a resume tab; an open one is
+				// jumped to, however long it has been idle.
+				if s.Open {
+					if s.Signal.TTY != "" {
 						tty := s.Signal.TTY
 						return m, actionCmd(func() error { return term.FocusTTY(tty) })
 					}
+					break
+				}
+				// Live without a probeable pid (no plugin): the tab is open
+				// somewhere but unroutable — reopening would duplicate it.
+				if s.State == registry.StateLive || s.Signal.Cwd == "" {
 					break
 				}
 				cwd, id := s.Signal.Cwd, s.ID

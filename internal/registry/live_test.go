@@ -75,9 +75,12 @@ func TestLiveSignalAppearsWithinDeadline(t *testing.T) {
 
 	const id = "live-sig-1"
 	ts := time.Now()
+	// the test process stands in for the tab's login process: a real pid the
+	// production liveness probe reports alive, so the session reads as open
+	pid := os.Getpid()
 	content := fmt.Sprintf(
-		`{"session_id":"%s","type":"running","message":"m","project":"liveproj","cwd":"/Users/x/live","tty":"/dev/ttys042","pid":"4242","ts":"%d"}`,
-		id, ts.Unix())
+		`{"session_id":"%s","type":"running","message":"m","project":"liveproj","cwd":"/Users/x/live","tty":"/dev/ttys042","pid":"%d","ts":"%d"}`,
+		id, pid, ts.Unix())
 
 	start := time.Now()
 	if err := os.WriteFile(filepath.Join(f.signalDir, id+".json"), []byte(content), 0o644); err != nil {
@@ -110,8 +113,11 @@ func TestLiveSignalAppearsWithinDeadline(t *testing.T) {
 	if s.Signal.Project != "liveproj" {
 		t.Errorf("project = %q, want %q", s.Signal.Project, "liveproj")
 	}
-	if s.Signal.Cwd != "/Users/x/live" || s.Signal.Pid != 4242 {
-		t.Errorf("cwd/pid = %q/%d, want /Users/x/live/4242", s.Signal.Cwd, s.Signal.Pid)
+	if s.Signal.Cwd != "/Users/x/live" || s.Signal.Pid != pid {
+		t.Errorf("cwd/pid = %q/%d, want /Users/x/live/%d", s.Signal.Cwd, s.Signal.Pid, pid)
+	}
+	if !s.Open {
+		t.Error("Open = false although the signal pid is alive")
 	}
 	t.Logf("C1 signal latency: %v (deadline %v)", elapsed, liveDeadline)
 }

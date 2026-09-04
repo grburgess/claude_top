@@ -11,11 +11,16 @@ import (
 // fixed "now" for the fake clock
 var now = time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 
+// signalPid is the pid every writeSignal fixture records; openPids decides
+// whether the fake liveness probe reports it alive (terminal still open).
+const signalPid = 1
+
 type fixture struct {
 	r           *Registry
 	signalDir   string
 	projectsDir string
 	slugDir     string
+	openPids    map[int]bool
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -28,14 +33,28 @@ func newFixture(t *testing.T) *fixture {
 	}
 	r := New(signalDir, projectsDir)
 	r.Now = func() time.Time { return now }
-	return &fixture{r: r, signalDir: signalDir, projectsDir: projectsDir, slugDir: slugDir}
+	f := &fixture{
+		r: r, signalDir: signalDir, projectsDir: projectsDir, slugDir: slugDir,
+		openPids: map[int]bool{},
+	}
+	r.Alive = func(pid int) bool { return f.openPids[pid] }
+	return f
 }
+
+// openTerminal makes the fixture's signal pid probe as alive, i.e. the
+// session's tab is still open.
+func (f *fixture) openTerminal() { f.openPids[signalPid] = true }
 
 func (f *fixture) writeSignal(t *testing.T, id, typ string, ts time.Time) {
 	t.Helper()
+	f.writeSignalPid(t, id, typ, ts, signalPid)
+}
+
+func (f *fixture) writeSignalPid(t *testing.T, id, typ string, ts time.Time, pid int) {
+	t.Helper()
 	content := fmt.Sprintf(
-		`{"session_id":"%s","type":"%s","message":"m","project":"p","cwd":"/Users/x/proj","tty":"/dev/ttys001","pid":"1","ts":"%d"}`,
-		id, typ, ts.Unix())
+		`{"session_id":"%s","type":"%s","message":"m","project":"p","cwd":"/Users/x/proj","tty":"/dev/ttys001","pid":"%d","ts":"%d"}`,
+		id, typ, pid, ts.Unix())
 	if err := os.WriteFile(filepath.Join(f.signalDir, id+".json"), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -53,22 +72,28 @@ func (f *fixture) writeTranscript(t *testing.T, id string, mtime time.Time) {
 	}
 }
 
-func (f *fixture) stateOf(t *testing.T, id string) State {
+func (f *fixture) sessionOf(t *testing.T, id string) *Session {
 	t.Helper()
 	if err := f.r.Refresh(); err != nil {
 		t.Fatal(err)
 	}
 	for _, s := range f.r.List(ModeAll) {
 		if s.ID == id {
-			return s.State
+			return s
 		}
 	}
 	t.Fatalf("session %s not found", id)
-	return StateDead
+	return nil
+}
+
+func (f *fixture) stateOf(t *testing.T, id string) State {
+	t.Helper()
+	return f.sessionOf(t, id).State
 }
 
 func TestStateLiveFreshSignalAndTranscript(t *testing.T) {
 	f := newFixture(t)
+	f.openTerminal()
 	f.writeSignal(t, "s1", "idle", now.Add(-5*time.Minute))
 	f.writeTranscript(t, "s1", now.Add(-2*time.Minute))
 	if got := f.stateOf(t, "s1"); got != StateLive {
@@ -76,12 +101,46 @@ func TestStateLiveFreshSignalAndTranscript(t *testing.T) {
 	}
 }
 
-func TestStateLiveRunningSignalStaleTranscript(t *testing.T) {
+// TestStateLiveOpenTerminalIdleForHours is the definition of live: the tab is
+// open, so the session is live no matter how long ago it last did anything.
+func TestStateLiveOpenTerminalIdleForHours(t *testing.T) {
 	f := newFixture(t)
-	f.writeSignal(t, "s2", "running", now.Add(-2*time.Hour))
+	f.openTerminal()
+	f.writeSignal(t, "s2", "idle", now.Add(-2*time.Hour))
 	f.writeTranscript(t, "s2", now.Add(-2*time.Hour))
-	if got := f.stateOf(t, "s2"); got != StateLive {
-		t.Errorf("state = %v, want live (type running)", got)
+	s := f.sessionOf(t, "s2")
+	if !s.Open {
+		t.Error("Open = false for a session whose pid is alive")
+	}
+	if s.State != StateLive {
+		t.Errorf("state = %v, want live (terminal open)", s.State)
+	}
+}
+
+// TestStateNotLiveWhenTerminalClosed is the mirror: a signal fresh enough to
+// pass every time window still is not live once its pid is gone.
+func TestStateNotLiveWhenTerminalClosed(t *testing.T) {
+	f := newFixture(t) // pid never marked open
+	f.writeSignal(t, "s2b", "running", now.Add(-1*time.Minute))
+	f.writeTranscript(t, "s2b", now.Add(-1*time.Minute))
+	s := f.sessionOf(t, "s2b")
+	if s.Open {
+		t.Error("Open = true for a session whose pid is gone")
+	}
+	if s.State == StateLive {
+		t.Error("state = live for a closed terminal")
+	}
+}
+
+// TestStateLiveRunningSignalWithoutPid keeps the timestamp fallback working
+// for signals that carry no pid (older plugin): openness is undecidable
+// there, so `type: running` still means live.
+func TestStateLiveRunningSignalWithoutPid(t *testing.T) {
+	f := newFixture(t)
+	f.writeSignalPid(t, "s2c", "running", now.Add(-2*time.Hour), 0)
+	f.writeTranscript(t, "s2c", now.Add(-2*time.Hour))
+	if got := f.stateOf(t, "s2c"); got != StateLive {
+		t.Errorf("state = %v, want live (type running, no pid to probe)", got)
 	}
 }
 
@@ -132,21 +191,31 @@ func TestStateDead(t *testing.T) {
 	}
 }
 
-func TestStateTransitionByClock(t *testing.T) {
+// TestStateTransitionOnCloseThenClock: an open session stays live as the
+// clock runs; closing the terminal drops it to recent, and only then does
+// age carry it to dead.
+func TestStateTransitionOnCloseThenClock(t *testing.T) {
 	f := newFixture(t)
+	f.openTerminal()
 	f.writeSignal(t, "s6", "idle", now.Add(-5*time.Minute))
 	f.writeTranscript(t, "s6", now.Add(-5*time.Minute))
 	if got := f.stateOf(t, "s6"); got != StateLive {
 		t.Fatalf("state = %v, want live", got)
 	}
-	// advance fake clock 20 min: transcript now 25 min old -> recent
 	saved := now
 	defer func() { now = saved }()
-	now = now.Add(20 * time.Minute)
-	if got := f.stateOf(t, "s6"); got != StateRecent {
-		t.Errorf("state after +20m = %v, want recent", got)
+
+	// clock alone must not demote an open session
+	now = saved.Add(20 * time.Minute)
+	if got := f.stateOf(t, "s6"); got != StateLive {
+		t.Errorf("state after +20m (still open) = %v, want live", got)
 	}
-	// advance to 40 min old -> dead
+	// close the terminal: transcript is 25 min old -> recent
+	delete(f.openPids, signalPid)
+	if got := f.stateOf(t, "s6"); got != StateRecent {
+		t.Errorf("state after close = %v, want recent", got)
+	}
+	// and 40 min old -> dead
 	now = saved.Add(40 * time.Minute)
 	if got := f.stateOf(t, "s6"); got != StateDead {
 		t.Errorf("state after +40m = %v, want dead", got)
@@ -155,6 +224,7 @@ func TestStateTransitionByClock(t *testing.T) {
 
 func TestListModesAndOrder(t *testing.T) {
 	f := newFixture(t)
+	f.openTerminal()
 	f.writeSignal(t, "live1", "running", now.Add(-1*time.Minute))
 	f.writeTranscript(t, "live1", now.Add(-1*time.Minute))
 	f.writeTranscript(t, "recent1", now.Add(-20*time.Minute))

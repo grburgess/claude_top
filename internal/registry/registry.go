@@ -3,11 +3,13 @@
 package registry
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/burgessj/claude_top/internal/signalfile"
@@ -75,6 +77,12 @@ type Session struct {
 	TabBackend      string // backend owning the tab ("iterm", "tmux")
 	HasTab          bool
 
+	// Open reports that the session's terminal is still open, tested
+	// against the signal's pid (the tab's login process, which exits with
+	// the tab). False when the pid is gone OR when no signal carries one —
+	// see openDecidable.
+	Open bool
+
 	// StatsReady reports that Stats/agent counts reflect the transcript
 	// (set by EnsureStats; cleared when the transcript grows).
 	StatsReady bool
@@ -87,7 +95,8 @@ type Session struct {
 type Registry struct {
 	SignalDir   string
 	ProjectsDir string
-	Now         func() time.Time // injectable clock
+	Now         func() time.Time   // injectable clock
+	Alive       func(pid int) bool // injectable liveness probe
 
 	mu       sync.Mutex
 	readers  map[string]*transcript.Reader
@@ -115,6 +124,7 @@ func New(signalDir, projectsDir string) *Registry {
 		SignalDir:   signalDir,
 		ProjectsDir: projectsDir,
 		Now:         time.Now,
+		Alive:       processAlive,
 		readers:     map[string]*transcript.Reader{},
 		sessions:    map[string]*Session{},
 		inflight:    map[string]bool{},
@@ -169,6 +179,7 @@ func (r *Registry) RefreshIndex() error {
 			delete(r.readers, id)
 			continue
 		}
+		s.Open = r.isOpen(s)
 		s.State = classify(s, now)
 		if s.TranscriptPath == "" {
 			s.StatsReady = true // nothing to parse
@@ -287,19 +298,56 @@ func (r *Registry) session(id string) *Session {
 	return s
 }
 
+// processAlive reports whether pid exists. Signal 0 performs the usual
+// permission and existence checks without delivering anything; EPERM means
+// the process is alive but owned by another user.
+func processAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	err := syscall.Kill(pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
+}
+
+// openDecidable reports whether the session carries a pid we can probe. Only
+// then is a negative liveness result meaningful.
+func openDecidable(s *Session) bool { return s.HasSignal && s.Signal.Pid > 0 }
+
+// isOpen tests the session's terminal for liveness. Called with r.mu held.
+func (r *Registry) isOpen(s *Session) bool {
+	if !openDecidable(s) {
+		return false
+	}
+	alive := r.Alive
+	if alive == nil {
+		alive = processAlive
+	}
+	return alive(s.Signal.Pid)
+}
+
 func classify(s *Session, now time.Time) State {
-	signalFresh := s.HasSignal && !s.Signal.Ts.IsZero() &&
-		now.Sub(s.Signal.Ts) < signalFreshWindow
-	transcriptFresh := !s.TranscriptMtime.IsZero() &&
-		now.Sub(s.TranscriptMtime) < liveTranscriptWindow
-	if (signalFresh && transcriptFresh) || (s.HasSignal && s.Signal.Type == "running") {
+	// An open terminal is live however long it has sat idle: the pid probe
+	// is ground truth, timestamps are only a proxy for it.
+	if s.Open {
 		return StateLive
 	}
-	// Signal-less machines (no iterm2-tab-status plugin): a very fresh
-	// transcript alone is live — no attention/working granularity.
-	if !s.HasSignal && !s.TranscriptMtime.IsZero() &&
-		now.Sub(s.TranscriptMtime) < noSignalLiveWindow {
-		return StateLive
+	// A signal carrying a pid makes openness decidable, so a dead pid means
+	// the tab is closed no matter how fresh the timestamps look. The time
+	// heuristics below are the fallback for sessions we cannot probe.
+	if !openDecidable(s) {
+		signalFresh := s.HasSignal && !s.Signal.Ts.IsZero() &&
+			now.Sub(s.Signal.Ts) < signalFreshWindow
+		transcriptFresh := !s.TranscriptMtime.IsZero() &&
+			now.Sub(s.TranscriptMtime) < liveTranscriptWindow
+		if (signalFresh && transcriptFresh) || (s.HasSignal && s.Signal.Type == "running") {
+			return StateLive
+		}
+		// Signal-less machines (no iterm2-tab-status plugin): a very fresh
+		// transcript alone is live — no attention/working granularity.
+		if !s.HasSignal && !s.TranscriptMtime.IsZero() &&
+			now.Sub(s.TranscriptMtime) < noSignalLiveWindow {
+			return StateLive
+		}
 	}
 	if !s.TranscriptMtime.IsZero() && now.Sub(s.TranscriptMtime) < recentWindow {
 		return StateRecent

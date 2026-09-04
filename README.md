@@ -23,6 +23,8 @@ claude_top writes nothing; it merges two read-only sources:
 1. **Signal files** from the [iterm2-tab-status](https://github.com/jaspersui/claude-code-iterm2-tab-status) plugin's hooks (`~/.cache/claude-tab-status/*.json`) — coarse status, tty, pid, cwd. Install that plugin for live status; without it, sessions are classified from transcript mtimes alone.
 2. **Transcripts** (`~/.claude/projects/<cwd-slug>/<session-id>.jsonl`) — tailed incrementally with monotonic byte offsets; malformed or unknown lines are skipped, never fatal.
 
+**A session is live while its terminal is open**, not while it is busy: the signal file records the tab's `login` pid, which exits with the tab, so liveness is a `kill(pid, 0)` probe rather than a timestamp heuristic. A session idle for hours stays live and enter jumps to it; only a session whose terminal is gone falls to recent (transcript under 30 min) or dead, and only there does enter open a fresh tab with `claude -r <id>`. Where no pid is available — a signal-less machine — the mtime heuristics still apply, and enter declines to act rather than risk a duplicate of a session that is already running.
+
 Tab jumping, interrupt, and prompt dispatch go through plain `osascript` against iTerm2's AppleScript dictionary — no Python API runtime, no persistent connection.
 
 ## Install
