@@ -19,6 +19,20 @@ docs/research/2026-09-01-claude-top.md; graph node research-plan-claude-top.
 | claude-top-v2 | 1 | 5/5 | complete | 2026-09-01 | — |
 
 ## 3 Cross-loop verified facts
+- Claude Code renames its terminal tab to the session's aiTitle ("◐ <title> …"),
+  so tab title ↔ transcript title is a reliable session↔tty link — the only
+  openness evidence for signal-less sessions · verified 2026-09-04: 8 open tabs,
+  all 8 titles matched their transcript title exactly, 6 had no signal file ·
+  source:feat/live-open-sessions · used:1 last:2026-09-04
+- The iterm2-tab-status signal files are SHORT-LIVED, not per-session-durable:
+  8 concurrently-open sessions had 2 signal files, and files seen minutes earlier
+  were gone. Anything keying session identity/liveness on signal presence is
+  wrong · verified via repeated ls + live classification · 2026-09-04 ·
+  source:feat/live-open-sessions · used:1 last:2026-09-04
+- Transcript titles come from lines of type "ai-title" (field aiTitle), NOT from
+  assistant lines · verified 2026-09-04 (a fixture writing aiTitle on an assistant
+  line parsed to an empty title) · source:feat/live-open-sessions · used:1
+  last:2026-09-04
 - AppleScript `tab` inside `tell application "iTerm2"` is iTerm2's tab CLASS and
   coerces to the literal string "tab"; only outside a tell block is it 0x09. Bind
   the delimiter before the tell (`set d to tab`) or use `(ASCII character 9)` ·
@@ -34,6 +48,18 @@ docs/research/2026-09-01-claude-top.md; graph node research-plan-claude-top.
   used:1 last:2026-09-01
 
 ## 4 Cross-loop rules
+- Derive a state from ground truth, not from a time window standing in for it:
+  claude_top classified "live" by signal/transcript freshness, so an open-but-idle
+  tab read as closed AND the enter action (which keyed off the same field) offered
+  a duplicate `claude -r`. One proxy field feeding both display and behaviour turns
+  a display bug into a destructive one — probe the real condition (pid alive, tab
+  title present) · 2026-09-04 · source:feat/live-open-sessions · used:1
+  last:2026-09-04
+- Test fixtures that hardcode a value the code under test will later probe give
+  false confidence: claude_top's fixtures wrote pid 1 (launchd, always alive), so
+  four liveness tests passed for the wrong reason. Fixture constants standing in
+  for real-world identities need an injectable probe, not a literal · 2026-09-04 ·
+  source:feat/live-open-sessions · used:1 last:2026-09-04
 - A generated-script surface tested only through an injectable fake exercises the
   parser, never the emitter: claude_top's iTerm enumerate script was never run by
   any test, so a delimiter yielding zero fields shipped green through two loops.
@@ -85,6 +111,10 @@ docs/research/2026-09-01-claude-top.md; graph node research-plan-claude-top.
   (Bubble Tea) is duplicated effort — candidate consolidation study.
 
 ## 9 Run log
+- 2026-09-04 · post-loop feature (not a distill run) · feat/live-open-sessions
+  merged: live = terminal open (pid probe + tab-title match), enter jumps instead
+  of resuming an open session · 3 verified facts + 2 rules added · user-confirmed
+  working on 8 live tabs
 - 2026-09-03 · post-loop field-bug fix (not a distill run) · systematic-debugging on
   "unsupported: can't focus <tty>" · root cause AppleScript tab-class shadowing ·
   1 verified fact + 2 rules added, both loops untouched (complete) · fix da9ad3d
