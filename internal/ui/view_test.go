@@ -62,6 +62,8 @@ func sampleSession() *registry.Session {
 		TotalAgents: 5,
 		AgentNames:  []string{"scout", "fixer"},
 		State:       registry.StateLive,
+		Open:        true,
+		TTY:         "/dev/ttys001",
 		TabIndex:    6,
 		HasTab:      true,
 	}
@@ -70,6 +72,15 @@ func sampleSession() *registry.Session {
 func idleSession() *registry.Session {
 	s := sampleSession()
 	s.Signal.Type = "idle"
+	return s
+}
+
+// closedSession is a session whose terminal has exited: Open is false, which
+// is what the action keys gate on regardless of the time-derived state.
+func closedSession(state registry.State) *registry.Session {
+	s := sampleSession()
+	s.Open = false
+	s.State = state
 	return s
 }
 

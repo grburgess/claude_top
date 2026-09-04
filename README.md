@@ -23,13 +23,17 @@ claude_top writes nothing; it merges two read-only sources:
 1. **Signal files** from the [iterm2-tab-status](https://github.com/jaspersui/claude-code-iterm2-tab-status) plugin's hooks (`~/.cache/claude-tab-status/*.json`) — coarse status, tty, pid, cwd. Install that plugin for live status; without it, sessions are classified from transcript mtimes alone.
 2. **Transcripts** (`~/.claude/projects/<cwd-slug>/<session-id>.jsonl`) — tailed incrementally with monotonic byte offsets; malformed or unknown lines are skipped, never fatal.
 
+**A session is live while its terminal is open**, not while it is busy. Two independent probes establish that, because neither alone is sufficient: the signal file records the tab's `login` pid, which exits with the tab, so `kill(pid, 0)` settles the question when a signal is present — but those files are short-lived, and in practice most open sessions have none. The second probe covers them: Claude renames its terminal tab after the session, so a tab whose title still carries a session's title proves that session's terminal is open, and names the tty to act on. Enumeration already reads those titles, so this costs nothing extra.
+
+A session idle for hours therefore stays live and enter jumps to it; only a session whose terminal is gone falls to recent (transcript under 30 min) or dead, and only there does enter open a fresh tab with `claude -r <id>`. Where neither probe applies the mtime heuristics still classify the session, and enter declines to act rather than risk duplicating a session that is already running.
+
 Tab jumping, interrupt, and prompt dispatch go through plain `osascript` against iTerm2's AppleScript dictionary — no Python API runtime, no persistent connection.
 
 ## Install
 
 Requires Go ≥ 1.22 and macOS with iTerm2 (the monitor itself runs anywhere; the jump/interrupt actions are iTerm2-specific).
 
-**Prerequisite for the live view:** the default `[live]` mode is driven by signal files from the [iterm2-tab-status](https://github.com/jaspersui/claude-code-iterm2-tab-status) Claude Code plugin — install it first (`/plugin install iterm2-tab-status` in Claude Code, then its `/iterm2-tab-status:setup`). Without it, sessions lack status signals and the default view appears **empty**; your sessions are still there under `h` → `[all]`, classified from transcript mtimes alone.
+**Optional, recommended:** the [iterm2-tab-status](https://github.com/jaspersui/claude-code-iterm2-tab-status) Claude Code plugin (`/plugin install iterm2-tab-status`, then its `/iterm2-tab-status:setup`). The `[live]` view no longer depends on it — open sessions are found by matching terminal tab titles — but its signal files add the working/idle/attention distinction, the session's cwd, and a pid that confirms liveness without waiting on a transcript parse.
 
 **Known first-launch cost:** startup currently parses every transcript under `~/.claude/projects/` before first paint — on a machine with a long Claude history this can take tens of seconds. One-time per launch; lazy/async loading is planned.
 

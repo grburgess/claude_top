@@ -28,6 +28,11 @@ const statusExpiry = 3 * time.Second
 // background after an index pass.
 const enrichWorkers = 4
 
+// titleScanWindow bounds the background back-fill that gives sessions the
+// title their tab is matched against: a session whose terminal is open but
+// which has written nothing for this long is not recognized as open.
+const titleScanWindow = 7 * 24 * time.Hour
+
 type tickMsg time.Time
 
 type sigMsg signalfile.Signal
@@ -124,7 +129,10 @@ func enumerateTabs(term bridge.Backend) tea.Cmd {
 		tabs := make(map[string]registry.TermTab, len(ss))
 		backends := make(map[string]string, len(ss))
 		for _, s := range ss {
-			tabs[s.TTY] = registry.TermTab{WindowID: s.WindowID, TabIndex: s.TabIndex, Backend: s.BackendName}
+			tabs[s.TTY] = registry.TermTab{
+				WindowID: s.WindowID, TabIndex: s.TabIndex,
+				Backend: s.BackendName, Title: s.Title,
+			}
 			backends[s.TTY] = s.BackendName
 		}
 		return termTabsMsg{tabs: tabs, backends: backends}
@@ -202,21 +210,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refresh()
 			return m, m.maybeEnrich()
 		case key.Matches(msg, keys.Interrupt):
-			if s := m.selected(); s != nil && s.State == registry.StateLive &&
-				s.HasSignal && s.Signal.TTY != "" {
+			if s := m.selected(); s != nil && s.Open && s.TTY != "" {
 				if m.armedID == s.ID && now().Sub(m.armedAt) <= interruptArmWindow {
 					m.armedID = ""
-					tty := s.Signal.TTY
+					tty := s.TTY
 					term := m.term
 					return m, actionCmd(func() error { return term.Interrupt(tty) })
 				}
 				m.armedID, m.armedAt = s.ID, now()
 			}
 		case key.Matches(msg, keys.Prompt):
-			if s := m.selected(); s != nil && s.State == registry.StateLive &&
-				s.HasSignal && s.Signal.TTY != "" {
+			if s := m.selected(); s != nil && s.Open && s.TTY != "" {
 				m.prompting = true
-				m.promptTTY = s.Signal.TTY
+				m.promptTTY = s.TTY
 				m.promptTitle = titleOf(s)
 				m.input = textinput.New()
 				m.input.Focus()
@@ -224,11 +230,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, keys.Focus):
 			if s := m.selected(); s != nil {
 				term := m.term
-				if s.State == registry.StateLive {
-					if s.HasSignal && s.Signal.TTY != "" {
-						tty := s.Signal.TTY
+				// Only a closed session gets a resume tab; an open one is
+				// jumped to, however long it has been idle.
+				if s.Open {
+					if s.TTY != "" {
+						tty := s.TTY
 						return m, actionCmd(func() error { return term.FocusTTY(tty) })
 					}
+					break
+				}
+				// Live without a probeable pid (no plugin): the tab is open
+				// somewhere but unroutable — reopening would duplicate it.
+				if s.State == registry.StateLive || s.Signal.Cwd == "" {
 					break
 				}
 				cwd, id := s.Signal.Cwd, s.ID
@@ -313,6 +326,17 @@ func (m Model) pendingStats() []string {
 	}
 	for _, s := range m.reg.List(registry.ModeLiveRecent) {
 		add(s) // live+recent parse immediately regardless of view mode
+	}
+	// Openness by tab title needs the title, which only a parse produces, so
+	// a session left unparsed can never be recognized as open. Back-fill
+	// recent history in activity order to break that circularity, bounded so
+	// a long transcript archive is not parsed on principle.
+	cutoff := time.Now().Add(-titleScanWindow)
+	for _, s := range m.reg.List(registry.ModeAll) {
+		if s.TranscriptMtime.Before(cutoff) {
+			break // List is activity-ordered: everything after is older
+		}
+		add(s)
 	}
 	return ids
 }
