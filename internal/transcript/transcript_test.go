@@ -122,6 +122,69 @@ func TestToolResultNotPrompt(t *testing.T) {
 	}
 }
 
+const workflowLaunchLine = `{"type":"user","message":{"content":[{"tool_use_id":"toolu_1","type":"tool_result","content":"Workflow launched in background. Task ID: wv1"}]},"toolUseResult":{"status":"async_launched","taskId":"wv1","taskType":"local_workflow","workflowName":"my-wf","summary":"do the thing","transcriptDir":"/tmp/wf_x"}}`
+
+func workflowNotificationLine(taskID, status string) string {
+	return `{"type":"user","message":{"content":"<task-notification>\n<task-id>` + taskID +
+		`</task-id>\n<tool-use-id>toolu_2</tool-use-id>\n<status>` + status +
+		`</status>\n<summary>Dynamic workflow \"my-wf\" ` + status + `</summary>\n</task-notification>"}}`
+}
+
+func TestWorkflowLaunchSetsRunning(t *testing.T) {
+	st := tailAll(t, workflowLaunchLine+"\n")
+	if !st.WorkflowRunning {
+		t.Fatal("WorkflowRunning = false, want true")
+	}
+	if st.WorkflowName != "my-wf" || st.WorkflowSummary != "do the thing" || st.WorkflowTranscriptDir != "/tmp/wf_x" {
+		t.Errorf("got name=%q summary=%q dir=%q", st.WorkflowName, st.WorkflowSummary, st.WorkflowTranscriptDir)
+	}
+}
+
+func TestWorkflowNotificationClearsRunning(t *testing.T) {
+	jsonl := workflowLaunchLine + "\n" + workflowNotificationLine("wv1", "completed") + "\n"
+	st := tailAll(t, jsonl)
+	if st.WorkflowRunning {
+		t.Error("WorkflowRunning = true, want false after matching completed notification")
+	}
+}
+
+func TestWorkflowNotificationKilledClearsRunning(t *testing.T) {
+	jsonl := workflowLaunchLine + "\n" + workflowNotificationLine("wv1", "killed") + "\n"
+	st := tailAll(t, jsonl)
+	if st.WorkflowRunning {
+		t.Error("WorkflowRunning = true, want false after matching killed notification")
+	}
+}
+
+func TestWorkflowNotificationMismatchedTaskIDIgnored(t *testing.T) {
+	jsonl := workflowLaunchLine + "\n" + workflowNotificationLine("other-task", "completed") + "\n"
+	st := tailAll(t, jsonl)
+	if !st.WorkflowRunning {
+		t.Error("WorkflowRunning = false, want true (notification was for a different taskId)")
+	}
+}
+
+// Completion is not guaranteed to ever appear as a type:"user" line: a
+// real transcript (pj_rufus 29bc9fa6) delivered its workflow's
+// notification only via a type:"queue-operation" line's content field —
+// the "user" line was never written because nothing was polling for it.
+func TestWorkflowQueueOperationNotificationClearsRunning(t *testing.T) {
+	jsonl := workflowLaunchLine + "\n" +
+		`{"type":"queue-operation","operation":"enqueue","content":"<task-notification>\n<task-id>wv1</task-id>\n<status>completed</status>\n</task-notification>"}` + "\n"
+	st := tailAll(t, jsonl)
+	if st.WorkflowRunning {
+		t.Error("WorkflowRunning = true, want false after queue-operation completion notification")
+	}
+}
+
+func TestWorkflowNotificationNotTreatedAsPrompt(t *testing.T) {
+	jsonl := workflowLaunchLine + "\n" + workflowNotificationLine("wv1", "completed") + "\n"
+	st := tailAll(t, jsonl)
+	if st.LastPromptSnippet != "" {
+		t.Errorf("LastPromptSnippet = %q, want empty (notification is not a prompt)", st.LastPromptSnippet)
+	}
+}
+
 func TestSkillsAndMCPDedup(t *testing.T) {
 	jsonl := `{"type":"assistant","attributionSkill":"deep-research","message":{"model":"claude-haiku-3","usage":{"input_tokens":1},"content":[]},"timestamp":"2026-01-01T10:00:00Z"}
 {"type":"assistant","attributionSkill":"deep-research","message":{"model":"claude-haiku-3","content":[{"type":"tool_use","id":"toolu_2","name":"Skill","input":{"skill":"boston"}}]},"timestamp":"2026-01-01T10:01:00Z"}
