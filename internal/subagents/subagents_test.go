@@ -53,3 +53,25 @@ func TestCountMissingDir(t *testing.T) {
 		t.Errorf("got %d %d %v, want zeros", live, total, names)
 	}
 }
+
+func TestCountDir(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "subagents", "workflows", "wf_x")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "agent-1.jsonl"), []byte(`{"type":"assistant"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "agent-1.meta.json"), []byte(`{"agentType":"workflow-subagent","spawnDepth":1,"model":"opus"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	live, total, names := CountDir(dir, 120*time.Second)
+	if live != 1 || total != 1 {
+		t.Errorf("live,total = %d,%d, want 1,1", live, total)
+	}
+	want := []string{"workflow-subagent"}
+	if !reflect.DeepEqual(names, want) {
+		t.Errorf("names = %v, want %v", names, want)
+	}
+}

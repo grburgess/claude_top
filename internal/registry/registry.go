@@ -66,19 +66,21 @@ type TermTab struct {
 
 // Session is the merged view of one Claude Code session.
 type Session struct {
-	ID              string
-	Signal          signalfile.Signal
-	HasSignal       bool
-	Stats           transcript.Stats
-	TranscriptPath  string
-	TranscriptMtime time.Time
-	LiveAgents      int
-	TotalAgents     int
-	AgentNames      []string
-	State           State
-	TabIndex        int    // tab/window shortcut; valid when HasTab
-	TabBackend      string // backend owning the tab ("iterm", "tmux")
-	HasTab          bool
+	ID                  string
+	Signal              signalfile.Signal
+	HasSignal           bool
+	Stats               transcript.Stats
+	TranscriptPath      string
+	TranscriptMtime     time.Time
+	LiveAgents          int
+	TotalAgents         int
+	AgentNames          []string
+	WorkflowLiveAgents  int
+	WorkflowTotalAgents int
+	State               State
+	TabIndex            int    // tab/window shortcut; valid when HasTab
+	TabBackend          string // backend owning the tab ("iterm", "tmux")
+	HasTab              bool
 
 	// Open reports that the session's terminal is still open: either the
 	// signal's pid (the tab's login process, which exits with the tab) is
@@ -224,6 +226,10 @@ func (r *Registry) EnsureStats(id string) bool {
 	err := rdCopy.Tail(path, &stats) // best effort
 	live, total, names := subagents.Count(
 		strings.TrimSuffix(path, ".jsonl"), subagentLiveWindow)
+	var wfLive, wfTotal int
+	if stats.WorkflowRunning && stats.WorkflowTranscriptDir != "" {
+		wfLive, wfTotal, _ = subagents.CountDir(stats.WorkflowTranscriptDir, subagentLiveWindow)
+	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -239,6 +245,7 @@ func (r *Registry) EnsureStats(id string) bool {
 		s.Stats = stats
 	}
 	s.LiveAgents, s.TotalAgents, s.AgentNames = live, total, names
+	s.WorkflowLiveAgents, s.WorkflowTotalAgents = wfLive, wfTotal
 	s.StatsReady = true
 	s.statsMtime = mtime
 	// The parse may have produced the title a tab is matched on, so resolve

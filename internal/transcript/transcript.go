@@ -39,6 +39,11 @@ type Stats struct {
 	MCPServers []string
 	Workflows  int
 
+	WorkflowRunning       bool
+	WorkflowName          string
+	WorkflowSummary       string
+	WorkflowTranscriptDir string
+
 	LastToolCall      string
 	LastPromptSnippet string
 	LastAssistantText string  // last non-empty assistant text block, ≤300 chars
@@ -57,6 +62,10 @@ type Reader struct {
 	// per content block, each repeating the same cumulative message.usage.
 	// Usage/cost/Turns are accumulated once per message.id.
 	lastUsageMsgID string
+
+	// pendingWorkflowTaskID is the taskId of the most recently launched
+	// Workflow run not yet matched to its completion notification.
+	pendingWorkflowTaskID string
 }
 
 type usage struct {
@@ -84,15 +93,17 @@ type line struct {
 		Usage   *usage          `json:"usage"`
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
-	Timestamp            string `json:"timestamp"`
-	GitBranch            string `json:"gitBranch"`
-	Version              string `json:"version"`
-	Effort               string `json:"effort"`
-	AiTitle              string `json:"aiTitle"`
-	Mode                 string `json:"mode"`
-	PermissionMode       string `json:"permissionMode"`
-	AttributionSkill     string `json:"attributionSkill"`
-	AttributionMcpServer string `json:"attributionMcpServer"`
+	ToolUseResult        json.RawMessage `json:"toolUseResult"`
+	QueueContent         string          `json:"content"` // queue-operation lines only
+	Timestamp            string          `json:"timestamp"`
+	GitBranch            string          `json:"gitBranch"`
+	Version              string          `json:"version"`
+	Effort               string          `json:"effort"`
+	AiTitle              string          `json:"aiTitle"`
+	Mode                 string          `json:"mode"`
+	PermissionMode       string          `json:"permissionMode"`
+	AttributionSkill     string          `json:"attributionSkill"`
+	AttributionMcpServer string          `json:"attributionMcpServer"`
 }
 
 // Tail reads from r.Offset to the last complete line of path, updating st.
@@ -145,7 +156,9 @@ func (r *Reader) reduceLine(data []byte, st *Stats) {
 	case "assistant":
 		r.reduceAssistant(&ln, ts, st)
 	case "user":
-		reduceUser(&ln, st)
+		r.reduceUser(&ln, st)
+	case "queue-operation":
+		r.noteTaskNotification(ln.QueueContent, st)
 	case "ai-title":
 		st.Title = ln.AiTitle
 	case "mode":
@@ -250,15 +263,79 @@ func (r *Reader) reduceAssistant(ln *line, ts time.Time, st *Stats) {
 	}
 }
 
-func reduceUser(ln *line, st *Stats) {
+// workflowLaunch is the toolUseResult shape of a Workflow tool_use once
+// the run has been backgrounded.
+type workflowLaunch struct {
+	Status        string `json:"status"`
+	TaskID        string `json:"taskId"`
+	TaskType      string `json:"taskType"`
+	WorkflowName  string `json:"workflowName"`
+	Summary       string `json:"summary"`
+	TranscriptDir string `json:"transcriptDir"`
+}
+
+func (r *Reader) reduceUser(ln *line, st *Stats) {
+	if len(ln.ToolUseResult) > 0 {
+		var wl workflowLaunch
+		if json.Unmarshal(ln.ToolUseResult, &wl) == nil &&
+			wl.TaskType == "local_workflow" && wl.Status == "async_launched" && wl.TaskID != "" {
+			r.pendingWorkflowTaskID = wl.TaskID
+			st.WorkflowRunning = true
+			st.WorkflowName = wl.WorkflowName
+			st.WorkflowSummary = wl.Summary
+			st.WorkflowTranscriptDir = wl.TranscriptDir
+		}
+	}
 	if ln.Message == nil {
 		return
 	}
-	var prompt string
-	if err := json.Unmarshal(ln.Message.Content, &prompt); err != nil {
+	var content string
+	if err := json.Unmarshal(ln.Message.Content, &content); err != nil {
 		return // arrays are tool_results etc., not real prompts
 	}
-	st.LastPromptSnippet = snippet(prompt, 80)
+	if r.noteTaskNotification(content, st) {
+		return
+	}
+	st.LastPromptSnippet = snippet(content, 80)
+}
+
+// noteTaskNotification checks content for a <task-notification> matching
+// the pending workflow run and clears WorkflowRunning on a terminal
+// status. Reports whether content was a task-notification at all, so
+// callers that also treat content as a user prompt (reduceUser) can skip
+// that fallback. Delivery of a workflow's completion is NOT guaranteed to
+// ever appear as a type:"user" line — it may only ever surface as a
+// type:"queue-operation" line's content field — so both call sites need
+// this same check.
+func (r *Reader) noteTaskNotification(content string, st *Stats) bool {
+	if !strings.HasPrefix(content, "<task-notification>") {
+		return false
+	}
+	if r.pendingWorkflowTaskID != "" {
+		taskID, _ := extractTag(content, "task-id")
+		status, _ := extractTag(content, "status")
+		if taskID == r.pendingWorkflowTaskID && (status == "completed" || status == "killed") {
+			st.WorkflowRunning = false
+			r.pendingWorkflowTaskID = ""
+		}
+	}
+	return true
+}
+
+// extractTag returns the text between <tag> and </tag> in s.
+func extractTag(s, tag string) (string, bool) {
+	open := "<" + tag + ">"
+	closeTag := "</" + tag + ">"
+	i := strings.Index(s, open)
+	if i < 0 {
+		return "", false
+	}
+	i += len(open)
+	j := strings.Index(s[i:], closeTag)
+	if j < 0 {
+		return "", false
+	}
+	return s[i : i+j], true
 }
 
 func snippet(s string, max int) string {

@@ -23,7 +23,13 @@ type meta struct {
 // liveWindow of now. Names come from the sibling .meta.json agentType
 // (falling back to the file stem), sorted for determinism.
 func Count(sessionDir string, liveWindow time.Duration) (live, total int, names []string) {
-	dir := filepath.Join(sessionDir, "subagents")
+	return CountDir(filepath.Join(sessionDir, "subagents"), liveWindow)
+}
+
+// CountDir is Count against a literal agent-*.jsonl directory, for
+// callers that already have one (e.g. a workflow run's own
+// subagents/workflows/wf_<id>/ transcript dir).
+func CountDir(dir string, liveWindow time.Duration) (live, total int, names []string) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return 0, 0, nil

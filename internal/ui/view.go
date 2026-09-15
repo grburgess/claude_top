@@ -234,6 +234,7 @@ func detailCard(s *registry.Session, cw int, backend string) []string {
 			cardLabel.Render("cost    ") + dots,
 			cardLabel.Render("where   ") + cardDim.Render(whereText(s, backend)),
 			cardLabel.Render("perm    ") + dots,
+			cardLabel.Render("workflow ") + dots,
 		}
 		colB = []string{
 			cardLabel.Render("skills  ") + dots,
@@ -248,6 +249,7 @@ func detailCard(s *registry.Session, cw int, backend string) []string {
 				cardDim.Render(" · ") + cardValue.Render(modelEffort(s)),
 			cardLabel.Render("where   ") + cardDim.Render(whereText(s, backend)),
 			cardLabel.Render("perm    ") + cardValue.Render(orDash(s.Stats.PermissionMode)),
+			cardLabel.Render("workflow ") + workflowText(s),
 		}
 		colB = []string{
 			cardLabel.Render("skills  ") + cardAmber.Render(orDash(strings.Join(s.Stats.Skills, ", "))),
@@ -261,8 +263,19 @@ func detailCard(s *registry.Session, cw int, backend string) []string {
 	var rows []string
 	if cw >= twoColMinW {
 		colW := (inner - 2) / 2
-		for i := range colA {
-			rows = append(rows, fitStyled(colA[i], colW)+"  "+fitStyled(colB[i], inner-colW-2))
+		n := len(colA)
+		if len(colB) > n {
+			n = len(colB)
+		}
+		for i := 0; i < n; i++ {
+			var a, b string
+			if i < len(colA) {
+				a = colA[i]
+			}
+			if i < len(colB) {
+				b = colB[i]
+			}
+			rows = append(rows, fitStyled(a, colW)+"  "+fitStyled(b, inner-colW-2))
 		}
 	} else {
 		for _, ln := range append(colA, colB...) {
@@ -347,6 +360,18 @@ func agentsText(s *registry.Session) string {
 	out := cardValue.Render(fmt.Sprintf("⚑%d live / %d total", s.LiveAgents, s.TotalAgents))
 	if len(s.AgentNames) > 0 {
 		out += cardDim.Render(" · " + strings.Join(s.AgentNames, ", "))
+	}
+	return out
+}
+
+func workflowText(s *registry.Session) string {
+	if !s.Stats.WorkflowRunning {
+		return cardDim.Render("—")
+	}
+	out := cardValue.Render(fmt.Sprintf("%s (%d/%d agents)",
+		orDash(s.Stats.WorkflowName), s.WorkflowLiveAgents, s.WorkflowTotalAgents))
+	if s.Stats.WorkflowSummary != "" {
+		out += cardDim.Render(" · " + s.Stats.WorkflowSummary)
 	}
 	return out
 }
